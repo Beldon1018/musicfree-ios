@@ -15,10 +15,13 @@ Pod::Spec.new do |s|
   # This pod is used as a :path development pod, so CocoaPods never fetches
   # this URL. It only exists to satisfy podspec validation.
   s.source           = { :git => 'https://github.com/maotoumao/MusicFree.git', :tag => 'v1.0.0-beta.4' }
-  s.source_files     = 'MusicFreeNative/**/*.{h,m,mm}'
+  s.source_files     = ['MusicFreeNative/**/*.{h,m,mm}']
   s.requires_arc     = true
-  s.dependency       = 'React-Core'
-  s.frameworks       = 'Foundation', 'UIKit', 'AVFoundation', 'CoreMedia'
+  # NOTE: must be the method-call form. `s.dependency = 'React-Core'` hits the
+  # attribute setter, which expects an Array and crashes with "undefined method
+  # `join' for an instance of String" during pod install.
+  s.dependency 'React-Core'
+  s.frameworks       = ['Foundation', 'UIKit', 'AVFoundation', 'CoreMedia']
   s.pod_target_xcconfig = {
     'CLANG_ENABLE_MODULES' => 'YES',
     'DEFINES_MODULE' => 'YES'
