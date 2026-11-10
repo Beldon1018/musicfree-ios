@@ -76,16 +76,17 @@ def inject_info_plist(path: Path) -> list[str]:
         data["ITSAppUsesNonExemptEncryption"] = False
         changes.append("ITSAppUsesNonExemptEncryption = false")
 
-    # GitHub Actions macOS runners ship the iPhoneOS SDK but ibtool cannot
-    # resolve a matching "iOS 18.2 Platform" while compiling the RN template's
-    # LaunchScreen.storyboard -> "error: iOS 18.2 Platform Not Installed."
-    # An Info.plist launch screen (iOS 14+) needs no storyboard compilation at
-    # all, which is both deterministic on CI and harmless on a real device.
-    if data.pop("UILaunchStoryboardName", None) is not None:
-        changes.append("UILaunchStoryboardName removed (ibtool CI workaround)")
-    if "UILaunchScreen" not in data:
-        data["UILaunchScreen"] = {}
-        changes.append("UILaunchScreen = {} (plist-based launch screen)")
+    # Keep the upstream LaunchScreen.storyboard. expo-splash-screen reads
+    # UILaunchStoryboardName during startup; an app with NO launch-screen
+    # resource at all can be killed before React Native mounts. The earlier
+    # ibtool "iOS 18.2 Platform Not Installed" failure came from xcodebuild
+    # resolving the simulator platform — build_unsigned_ipa.sh now pins
+    # -sdk iphoneos, which fixes ibtool without deleting the storyboard.
+    if data.pop("UILaunchScreen", None) is not None:
+        changes.append("stale UILaunchScreen plist override removed")
+    if data.get("UILaunchStoryboardName") != "LaunchScreen":
+        data["UILaunchStoryboardName"] = "LaunchScreen"
+        changes.append("UILaunchStoryboardName = LaunchScreen (restored)")
 
     # Capability keys for the optional Dynamic Island / Live Activity module.
     # They are inert until a Widget Extension target is added, so it is safe to
@@ -136,20 +137,88 @@ def inject_pbxproj(path: Path, ref: str) -> list[str]:
     if n:
         changes.append(f"CURRENT_PROJECT_VERSION -> {build_number} ({n} places)")
 
-    # Drop LaunchScreen.storyboard from the Resources build phase (and its
-    # PBXBuildFile entry). Keeping the orphan PBXFileReference / group entry is
-    # intentional: it keeps the diff tiny and Xcode tolerates it. Without this,
-    # ibtool fails on CI with "iOS 18.2 Platform Not Installed".
-    text, n = re.subn(
-        r'^\s*[0-9A-Fa-f]{24}\s+/\* LaunchScreen\.storyboard in Resources \*/[^\n]*\n',
-        '', text, flags=re.M,
-    )
-    if n:
-        changes.append(f"LaunchScreen.storyboard removed from Resources ({n} refs)")
+    # Intentionally KEEP LaunchScreen.storyboard in the Resources build phase.
+    # -sdk iphoneos (see build_unsigned_ipa.sh) is the real ibtool fix; removing
+    # the storyboard left the IPA with no launch-screen resource, which breaks
+    # expo-splash-screen during startup on a real device.
 
     if text != original:
         path.write_text(text, encoding="utf-8")
     return changes or ["already present"]
+
+
+def inject_bootstrap(path: Path) -> list[str]:
+    """Stop upstream bootstrap from running Android-only permissions on iOS.
+
+    `if (Platform.OS === "android" && Platform.Version >= 30) { ... } else {`
+    sends iOS into an else branch that calls PERMISSIONS.ANDROID.* through
+    react-native-permissions. iOS needs no storage permission, and an unknown
+    permission makes startup fail. Gate the else branch to Android only.
+    """
+    text = path.read_text(encoding="utf-8")
+    needle = ("    } else {\n"
+              "        const [readStoragePermission, writeStoragePermission]")
+    patched = ("    } else if (Platform.OS === \"android\") {\n"
+               "        const [readStoragePermission, writeStoragePermission]")
+    changes: list[str] = []
+    if needle in text:
+        path.write_text(text.replace(needle, patched, 1), encoding="utf-8")
+        changes.append("iOS skips PERMISSIONS.ANDROID.* in bootstrap")
+    elif patched in text:
+        changes.append("already present")
+    else:
+        raise RuntimeError(
+            "bootstrap.ts: Android permission branch anchor not found — "
+            "upstream changed, review manually before trusting this build")
+    return changes
+
+
+def inject_entry_index(path: Path) -> list[str]:
+    """Guard the Android-only StatusBar calls that run at JS-bundle load time.
+
+    `src/entry/index.tsx` executes these two statements at module scope, i.e.
+    before React even mounts:
+
+        StatusBar.setBackgroundColor("transparent");
+        StatusBar.setTranslucent(true);
+
+    Both are Android-only. Depending on the React Native version iOS either
+    logs a warning or reaches a missing native method, which would abort the
+    bundle evaluation right at startup. Gate them so the very first JS
+    statements cannot kill the app.
+    """
+    text = path.read_text(encoding="utf-8")
+    changes: list[str] = []
+
+    guarded = ("if (Platform.OS === \"android\") {\n"
+               "    StatusBar.setBackgroundColor(\"transparent\");\n"
+               "    StatusBar.setTranslucent(true);\n"
+               "}")
+    plain = ("StatusBar.setBackgroundColor(\"transparent\");\n"
+             "StatusBar.setTranslucent(true);")
+
+    if "import { Platform, StatusBar }" in text and guarded in text:
+        return ["already present"]
+
+    if plain not in text:
+        raise RuntimeError(
+            "src/entry/index.tsx: StatusBar top-level calls not found — "
+            "upstream changed, review manually before trusting this build")
+    text = text.replace(plain, guarded, 1)
+    changes.append("Android-only StatusBar calls gated to android")
+
+    if "import { StatusBar } from \"react-native\";" in text:
+        text = text.replace("import { StatusBar } from \"react-native\";",
+                            "import { Platform, StatusBar } from \"react-native\";", 1)
+        changes.append("Platform imported for the startup guard")
+    elif not re.search(
+            r"import\s*\{[^}]*\bPlatform\b[^}]*\}\s*from\s*[\"']react-native[\"']",
+            text):
+        raise RuntimeError(
+            "src/entry/index.tsx: cannot add Platform import — review manually")
+
+    path.write_text(text, encoding="utf-8")
+    return changes
 
 
 def main() -> int:
@@ -165,7 +234,9 @@ def main() -> int:
     podfile = ios / "Podfile"
     info = ios / "MusicFree" / "Info.plist"
     pbxproj = ios / "MusicFree.xcodeproj" / "project.pbxproj"
-    for required in (podfile, info, pbxproj):
+    bootstrap = upstream / "src/entry/bootstrap/bootstrap.ts"
+    entry_index = upstream / "src/entry/index.tsx"
+    for required in (podfile, info, pbxproj, bootstrap, entry_index):
         if not required.exists():
             print(json.dumps({"error": f"missing upstream file: {required}"}, indent=2))
             return 1
@@ -174,6 +245,8 @@ def main() -> int:
         report["Podfile"] = inject_podfile(podfile)
         report["Info.plist"] = inject_info_plist(info)
         report["project.pbxproj"] = inject_pbxproj(pbxproj, args.ref)
+        report["bootstrap.ts"] = inject_bootstrap(bootstrap)
+        report["src/entry/index.tsx"] = inject_entry_index(entry_index)
     except Exception as exc:  # noqa: BLE001 - surface actionable message to CI
         print(json.dumps({"error": str(exc)}, indent=2))
         return 1

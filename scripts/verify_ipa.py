@@ -36,6 +36,15 @@ def main() -> int:
         bundles = [n for n in names if n.endswith("main.jsbundle")]
         executable = info.get("CFBundleExecutable", "")
         exe_present = f"{app}/{executable}" in names
+        launch_resources = [n for n in names
+                            if "LaunchScreen.storyboardc" in n
+                            or n.endswith("LaunchScreen.nib")]
+        nested_frameworks = sorted({
+            n.split("/")[3] for n in names
+            if "/Frameworks/" in n
+            and len(n.split("/")) > 3
+            and n.split("/")[3].endswith(".framework")
+        })
 
     report = {
         "ipa": str(p),
@@ -49,6 +58,8 @@ def main() -> int:
         "platforms": info.get("CFBundleSupportedPlatforms"),
         "js_bundle_included": bool(bundles),
         "executable_included": exe_present,
+        "launch_screen_resources": len(launch_resources),
+        "nested_frameworks_to_resign": nested_frameworks,
         "signature_files": signature_files,
         "unsigned": not signature_files,
     }
@@ -61,10 +72,17 @@ def main() -> int:
         failed.append("main.jsbundle missing — app would launch to a blank screen")
     if not exe_present:
         failed.append("Mach-O executable missing")
+    if not launch_resources:
+        failed.append("no compiled launch screen in bundle — "
+                      "expo-splash-screen can crash before React Native mounts")
     if failed:
         print("VERIFY FAILED: " + "; ".join(failed), file=sys.stderr)
         return 1
-    print("VERIFY OK: unsigned iOS ipa with embedded JS bundle")
+    print("VERIFY OK: unsigned iOS ipa with embedded JS bundle and launch screen")
+    if nested_frameworks:
+        print("RESIGN NOTE: these nested frameworks MUST be codesigned recursively "
+              "by the sideload tool, otherwise dyld aborts at launch: "
+              + ", ".join(nested_frameworks))
     return 0
 
 

@@ -79,13 +79,17 @@ def main() -> int:
         check((plist.get("NSAppTransportSecurity") or {}).get("NSAllowsArbitraryLoads") is True,
               "arbitrary loads allowed (plugin sources use http)")
         check(plist.get("UIFileSharingEnabled") is True, "document/file sharing enabled")
-        check(plist.get("UILaunchStoryboardName") is None,
-              "storyboard launch removed (ibtool CI workaround)")
-        check("UILaunchScreen" in plist, "plist-based launch screen present")
+        check(plist.get("UILaunchStoryboardName") == "LaunchScreen",
+              "upstream LaunchScreen storyboard restored (expo-splash-screen needs it)")
+        check("UILaunchScreen" not in plist,
+              "no stale plist-based launch-screen override")
         check(plist.get("NSSupportsLiveActivities") is True,
               "Live Activity capability declared")
     else:
         check(False, "Info.plist exists")
+
+    check((ios / "MusicFree" / "LaunchScreen.storyboard").exists(),
+          "LaunchScreen.storyboard source present")
 
     # 4. Xcode project settings + JS bundle phase.
     pbxproj = ios / "MusicFree.xcodeproj" / "project.pbxproj"
@@ -94,8 +98,26 @@ def main() -> int:
     check("export:embed" in pbx_text or "react-native-xcode.sh" in pbx_text,
           "Release archive will embed main.jsbundle")
     check((ios / "Podfile.properties.json").exists(), "Expo Podfile.properties.json present")
-    check("LaunchScreen.storyboard in Resources" not in pbx_text,
-          "storyboard not in Resources build phase")
+    check("LaunchScreen.storyboard in Resources" in pbx_text,
+          "LaunchScreen.storyboard still compiled into Resources")
+
+    # 4a. iOS startup path must not run Android-only APIs.
+    bootstrap = src / "entry" / "bootstrap" / "bootstrap.ts"
+    if bootstrap.exists():
+        bt = bootstrap.read_text(encoding="utf-8")
+        check('} else if (Platform.OS === "android") {' in bt,
+              "bootstrap skips PERMISSIONS.ANDROID.* on iOS")
+    else:
+        check(False, "bootstrap.ts exists")
+
+    entry_index = src / "entry" / "index.tsx"
+    if entry_index.exists():
+        et = entry_index.read_text(encoding="utf-8")
+        check('import { Platform, StatusBar } from "react-native";' in et
+              and 'if (Platform.OS === "android") {' in et,
+              "top-level Android-only StatusBar calls guarded on iOS")
+    else:
+        check(False, "src/entry/index.tsx exists")
 
     # 4b. iOS-native replacements for the three degraded features.
     pod_src = pod_dir / "MusicFreeNative"
