@@ -83,8 +83,9 @@
     <span>上游 v1.0.0-beta.4</span>
     <span>RN 0.76.5 / Expo 52</span>
     <span>目标：未签名 IPA</span>
-    <span>静态校验 35/35</span>
+    <span>静态校验 41/41</span>
     <span>云端构建成功 · IPA 已产出</span>
+    <span>已修复启动闪退</span>
   </div>
 </header>
 
@@ -93,7 +94,7 @@
 </div>
 
 <div class="ok">
-  <p style="margin-top:0"><b>基础包已产出并通过校验（2026-11-10）：</b>云端 macOS runner 第三次构建 <code>42845832731</code> 成功，交付 <code>MusicFree-v1.0.0-beta.4-unsigned.ipa</code>（源码提交 <code>83fd6c4</code>）。</p>
+  <p style="margin-top:0"><b>首个出包的构建记录（2026-11-10，该产物现已弃用）：</b>云端 macOS runner 第三次构建 <code>42845832731</code> 成功，产出 <code>MusicFree-v1.0.0-beta.4-unsigned.ipa</code>（源码提交 <code>83fd6c4</code>）。<b>该包缺少 <code>SplashScreen.storyboardc</code>，自签后真机启动会闪退，请勿再使用；请改用 <code>f70b008</code> 之后的修复版 IPA。</b></p>
   <table style="margin-bottom:0">
     <tr><th>大小 / SHA-256</th><td>7,231,214 字节 · <code>7621d1092d7f671c40a04cab50fcdb67a3926672925af62c73c039c4dc506da2</code></td></tr>
     <tr><th>结构</th><td><code>Payload/MusicFree.app</code>，内嵌 <code>main.jsbundle</code>，arm64 thin Mach-O，84 个 zip 条目</td></tr>
@@ -239,7 +240,9 @@ Command SwiftCompile failed with a nonzero exit code
 
 <p>日志里只有一条真正的 <code>error:</code> —— <code>ibtool</code> 编译 RN 模板的启动屏 storyboard 时在 macOS runner 上找不到对应 platform，SwiftCompile 是级联取消。修法是确定性的：<code>inject_ios.py</code> 幂等移除 storyboard 在 Resources 阶段的引用，改用 iOS 14+ 的 <code>UILaunchScreen</code> plist 启动屏（完全没有 ibtool 步骤），同时 <code>xcodebuild</code> 显式指定 <code>-sdk iphoneos</code>。<code>plutil -lint project.pbxproj</code> 已确认改动后的工程文件语法有效。</p>
 
-<div class="ok"><b>第三次构建 <code>42845832731</code> 已成功：</b><code>prepare.sh</code> 35/35 → <code>npm ci</code> → <code>pod install</code> → <code>xcodebuild -sdk iphoneos ... CODE_SIGNING_ALLOWED=NO</code> 全链路通过。这同时证明 storyboard 修复生效，以及三个新增 Objective-C 模块（浮层 / ID3 / Live Activity 桥）都通过了 Clang 编译与链接，<code>main.jsbundle</code> 也已嵌入。</div>
+<div class="ok"><b>第三次构建 <code>42845832731</code> 已成功：</b><code>prepare.sh</code> 35/35 → <code>npm ci</code> → <code>pod install</code> → <code>xcodebuild -sdk iphoneos ... CODE_SIGNING_ALLOWED=NO</code> 全链路通过。三个新增 Objective-C 模块（浮层 / ID3 / Live Activity 桥）都通过了 Clang 编译与链接，<code>main.jsbundle</code> 也已嵌入。</div>
+
+<div class="danger"><b>后续更正（重要）：</b>上面关于「移除 storyboard 是确定性修法」的判断已被推翻，中间还走过一次弯路。用户自签后反馈「打开闪退」：追到 Expo SDK 52 源码，<code>SplashScreenManager.showSplashScreen()</code> 在原生启动阶段硬编码 <code>UIStoryboard(name: "SplashScreen", bundle: nil)</code>，找不到该 storyboard 会直接抛异常；上游 RN 模板只有 <code>LaunchScreen.storyboard</code>，Expo pod 也不自带。第一轮 <code>a4f3d63</code> 直接恢复 storyboard 编译，云端 <code>42853265361</code> 仍被 <code>ibtool: iOS 18.2 Platform Not Installed</code> 挡住（证明单独加 <code>-sdk iphoneos</code> 不够）。最终 <code>f70b008</code> 生成一份精简的 <code>SplashScreen.storyboard</code>（去掉旧模板的 <code>&lt;deployment identifier="iOS"/&gt;</code> 等元数据），让系统启动屏与 Expo 共用 <code>SplashScreen.storyboardc</code>，并修正 iOS 上误用 Android API 的两处启动调用。另外包内 <code>Frameworks/hermes.framework</code> 必须由自签工具<b>递归签名</b>，否则 dyld 会在启动阶段终止进程。完整诊断与操作步骤见 <a href="signing-and-crash-guide.html">《签名与闪退排查》</a>。</div>
 
 <h2>六、实施顺序</h2>
 
@@ -250,7 +253,7 @@ Command SwiftCompile failed with a nonzero exit code
 
 <h2>七、验证状态与边界</h2>
 
-<div class="ok"><b>已验证：</b><code>prepare.sh</code> 静态校验 <b>35 项 0 失败</b>；连续两次重放聚合哈希一致（幂等）；<code>project.pbxproj</code> / 两个 <code>Info.plist</code> 通过 <code>plutil -lint</code>；podspec <code>ruby -c</code>、Python <code>py_compile</code>、shell <code>bash -n</code>、3 个 <code>index.ios.ts</code> 的 TypeScript 语法全部通过；<b>云端完整 Release archive 成功</b>，三个 Objective-C 模块通过 Clang 编译链接；<code>verify_ipa.py</code> 确认产物未签名且含 JS bundle。</div>
+<div class="ok"><b>已验证：</b><code>prepare.sh</code> 静态校验 <b>41 项 0 失败</b>（新增 Expo storyboard 名字、ibtool 安全 XML 与 iOS 启动分支断言）；连续两次重放聚合哈希一致（幂等）；<code>project.pbxproj</code> / 两个 <code>Info.plist</code> 通过 <code>plutil -lint</code>；podspec <code>ruby -c</code>、Python <code>py_compile</code>、shell <code>bash -n</code>、3 个 <code>index.ios.ts</code> 的 TypeScript 语法全部通过；<b>云端完整 Release archive 成功</b>，三个 Objective-C 模块通过 Clang 编译链接；<code>verify_ipa.py</code> 确认产物未签名且含 JS bundle。</div>
 
 <div class="danger"><b>仍待验证：</b>灵动岛 Swift 源码默认未加入任何 Xcode target，因此<b>尚未过 Swift 编译器</b>，当前 IPA 内无 <code>.appex</code>，实时活动不会启动；浮层拖动与触摸穿透、ID3 <code>USLT</code>/<code>SYLT</code> 实际解码、元数据覆盖层读写、后台音频与锁屏联动都需要<b>真机</b>验证；Sideloadly / AltStore / ESign 重签安装未验证；自动同步的「发现新 tag → 重新构建 → 发 Release」全链路也还没真实触发过。这些都不算已完成交付。</div>
 
@@ -269,7 +272,7 @@ Command SwiftCompile failed with a nonzero exit code
 
 <footer>
   工程仓库：<code>https://github.com/Beldon1018/musicfree-ios</code> ｜ 上游 <code>maotoumao/MusicFree</code>（AGPL-3.0，本适配层同样受其约束）<br>
-  交付物：<code>MusicFree-v1.0.0-beta.4-unsigned.ipa</code>（未签名，需自签安装）、<code>musicfree-ios-adapter.zip</code>（适配工程源码，对应提交 <code>83fd6c4</code> 及之后的文档更新）、本文档。<br>
+  交付物：修复版未签名 IPA（需自签安装）、<code>musicfree-ios-adapter.zip</code>（适配工程源码，含提交 <code>f70b008</code> 的启动闪退修复）、<a href="signing-and-crash-guide.html">《签名与闪退排查》</a>、本文档。<br>
   不是官方 iOS 版；上游 AGPL-3.0，分发 IPA 时请一并公开对应源码。
 </footer>
 

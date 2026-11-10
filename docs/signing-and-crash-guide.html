@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MusicFree iOS · 签名后闪退：诊断、修复与正确自签步骤</title>
+<style>
+  :root{
+    --bg:#f5f7fa; --card:#ffffff; --ink:#1b2330; --muted:#5b6879;
+    --line:#e3e8ef; --blue:#2563eb; --blue-soft:#eef4ff;
+    --green:#0f766e; --green-soft:#e9f7f4; --amber:#a16207; --amber-soft:#fff7e6;
+    --red:#b42318; --red-soft:#fef3f2; --code:#f1f4f8;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    line-height:1.75;font-size:15px}
+  .wrap{max-width:1080px;margin:0 auto;padding:40px 24px 80px}
+  header{background:linear-gradient(135deg,#7f1d1d,#b42318 55%,#e05252);color:#fff;
+    border-radius:18px;padding:38px 40px;margin-bottom:28px;box-shadow:0 10px 30px rgba(180,35,24,.18)}
+  header h1{margin:0 0 10px;font-size:29px;letter-spacing:.3px}
+  header p{margin:0;opacity:.94;font-size:15px}
+  .meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}
+  .meta span{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.25);
+    padding:5px 12px;border-radius:999px;font-size:12.5px}
+  h2{font-size:21px;margin:38px 0 16px;padding-left:12px;border-left:4px solid var(--blue)}
+  h3{font-size:16.5px;margin:24px 0 10px}
+  p{margin:10px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:22px 26px;margin:14px 0;box-shadow:0 1px 3px rgba(16,24,40,.04)}
+  .lead{font-size:16px;background:var(--blue-soft);border-color:#cfe0ff}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14px;background:#fff}
+  th,td{border:1px solid var(--line);padding:10px 12px;text-align:left;vertical-align:top}
+  th{background:#f0f4f9;font-weight:600;color:#334155}
+  tr:nth-child(even) td{background:#fafbfd}
+  code{background:var(--code);padding:2px 6px;border-radius:5px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+  pre{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:16px 18px;
+    overflow-x:auto;font-size:12.8px;line-height:1.6;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  pre code{background:none;padding:0;color:inherit;font-size:inherit}
+  .tag{display:inline-block;font-size:11.5px;font-weight:600;padding:3px 9px;
+    border-radius:6px;margin-bottom:10px;letter-spacing:.2px}
+  .t-done{background:var(--green-soft);color:var(--green)}
+  .t-part{background:var(--amber-soft);color:var(--amber)}
+  .t-hard{background:var(--red-soft);color:var(--red)}
+  .note{border-left:4px solid var(--amber);background:var(--amber-soft);
+    padding:14px 18px;border-radius:0 10px 10px 0;margin:16px 0;font-size:14px}
+  .danger{border-left:4px solid var(--red);background:var(--red-soft);
+    padding:14px 18px;border-radius:0 10px 10px 0;margin:16px 0;font-size:14px}
+  .ok{border-left:4px solid var(--green);background:var(--green-soft);
+    padding:14px 18px;border-radius:0 10px 10px 0;margin:16px 0;font-size:14px}
+  ul,ol{padding-left:22px;margin:10px 0}
+  li{margin:6px 0}
+  .step{display:flex;gap:14px;margin:16px 0;align-items:flex-start}
+  .step .n{flex:0 0 30px;height:30px;border-radius:50%;background:var(--blue);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px}
+  .step .body{flex:1}
+  .step .body b{display:block;margin-bottom:3px}
+  .small{font-size:13px;color:var(--muted)}
+  footer{margin-top:46px;padding-top:20px;border-top:1px solid var(--line);
+    color:var(--muted);font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>签名后打开闪退：诊断、修复与正确自签步骤</h1>
+  <p>为什么构建成功 ≠ 真机能启动；哪些问题已在源码侧修掉，哪一步必须由签名工具做对</p>
+  <div class="meta">
+    <span>2026-11-10</span>
+    <span>上游 v1.0.0-beta.4</span>
+    <span>修复提交 f70b008</span>
+    <span>静态校验 41/41</span>
+    <span>适用：未签名 IPA 自签</span>
+  </div>
+</header>
+
+<div class="card lead">
+  <b>一句话结论：</b>「打开即闪退」有两类独立原因，必须同时处理。
+  <br><br>
+  <b>主因（已在源码侧修复，有 Expo 源码级证据）：</b>Expo SDK 52 在<b>原生启动阶段</b>执行
+  <code>SplashScreenAppDelegateSubscriber.customizeRootView → SplashScreenManager.initWith → showSplashScreen → UIStoryboard(name: "SplashScreen", bundle: nil)</code>。
+  <code>UIStoryboard(name:)</code> 找不到同名 storyboard 会直接抛异常。而上游 RN 模板只有 <code>LaunchScreen.storyboard</code>，<code>ExpoSplashScreen.podspec</code> 也不带任何 storyboard 资源 —— 旧包里根本没有 <code>SplashScreen.storyboardc</code>，所以 App 在 React Native 挂载之前就被杀掉。这跟 JS 里有没有调用 <code>SplashScreen</code> 无关。
+  <br><br>
+  <b>另一类（签名侧，必须做对）：</b>包内有 <code>Frameworks/hermes.framework</code>。自签工具若只签主可执行文件，dyld 加载 Hermes 时校验失败，同样会在 <code>main()</code> 之前终止进程。换新包也不能省掉这一步。
+</div>
+
+<h2>1. 诊断过程：排除了什么，锁定了什么</h2>
+
+<p>先把「构建成功」和「可运行」拆开。云端归档成功只能证明编译、链接、bundle 生成没问题，不能证明 dyld 加载、启动屏、JS 首帧都能通过。对旧包 <code>MusicFree-v1.0.0-beta.4-unsigned.ipa</code>（SHA-256 <code>7621d109…dc506da2</code>）逐项复核结果如下。</p>
+
+<table>
+  <tr><th style="width:30%">检查项</th><th style="width:20%">结果</th><th>说明</th></tr>
+  <tr><td><code>Payload/MusicFree.app</code> 结构</td><td>正常</td><td>arm64 thin Mach-O，<code>MusicFree</code> 可执行文件存在</td></tr>
+  <tr><td><code>main.jsbundle</code></td><td>正常</td><td>6,321,199 字节，Hermes bytecode magic <code>c61fbc03c103191f</code> 正确</td></tr>
+  <tr><td>根组件注册名</td><td>一致</td><td><code>app.json → MusicFree</code>、<code>AppRegistry.registerComponent</code>、<code>AppDelegate.moduleName = @"MusicFree"</code> 三者一致，Release 加载本地 bundle 而非 Metro</td></tr>
+  <tr><td>iOS 原生模块覆盖层是否进包</td><td>已进包</td><td>bundle 内可查到 <code>MusicFreeLiveActivity</code> / <code>liveCall</code>；上游 Android 的 <code>LyricUtil</code> monkey patch 标记不在，说明 <code>index.ios.ts</code> 生效</td></tr>
+  <tr><td>签名状态</td><td>确认未签名</td><td>无 <code>_CodeSignature</code> / <code>embedded.mobileprovision</code> / <code>CodeResources</code> / <code>SC_Info</code></td></tr>
+  <tr><td>Extension</td><td>无</td><td>没有 <code>.appex</code>，灵动岛只是源码预留，未接线，不参与本次启动</td></tr>
+  <tr><td><b>启动屏资源</b></td><td><b>0 个</b></td><td>包内 84 个条目里没有任何 <code>.storyboardc</code> / <code>.nib</code> / <code>Assets.car</code>；plist 里 <code>UILaunchStoryboardName = None</code>，只有一个空的 <code>UILaunchScreen = {}</code></td></tr>
+  <tr><td><b>Expo 启动屏契约</b></td><td><b>不满足</b></td><td>查 Expo SDK 52 源码：<code>SplashScreenManager.swift</code> 的 <code>showSplashScreen()</code> 硬编码 <code>UIStoryboard(name: "SplashScreen", bundle: nil)</code>；<code>ExpoSplashScreen.podspec</code> 的 <code>source_files</code> 只有 <code>*.{h,m,swift}</code>，<b>不自带 storyboard</b>；<code>SplashScreenAppDelegateSubscriber.customizeRootView</code> 会在原生启动时自动触发。旧包缺 <code>SplashScreen.storyboardc</code> → 抛异常 → 闪退</td></tr>
+  <tr><td><b>嵌套动态框架</b></td><td><b>1 个</b></td><td><code>Frameworks/hermes.framework/hermes</code>，自签时必须单独、先于 <code>.app</code> 签名</td></tr>
+  <tr><td>JS 启动分支</td><td>有 Android-only 调用</td><td><code>bootstrap.ts</code> 在 iOS 上会走进 <code>PERMISSIONS.ANDROID.*</code>；<code>src/entry/index.tsx</code> 在模块顶层调用 Android-only 的 <code>StatusBar.setBackgroundColor/setTranslucent</code></td></tr>
+</table>
+
+<div class="note">
+  <b>置信度说明：</b>Expo 硬编码 <code>SplashScreen</code> storyboard 是<b>源码级事实</b>，旧包缺该资源是<b>包内事实</b>，两者构成完整的启动崩溃链，已修复。<code>hermes.framework</code> 未递归签名是自签场景下另一个高频原因，但只有真机崩溃日志才能确认是否同时存在。另外 <code>bootstrap.ts</code> 的权限异常会被外层 <code>try/catch</code> 接住，更可能表现为「初始化出错」界面而非进程闪退 —— 仍是必须修的真实 bug，但不当作闪退主因。
+</div>
+
+<h2>2. 源码侧修复过程（两次尝试，如实记录）</h2>
+
+<p>第一次尝试 <code>a4f3d63</code> 只是把被删掉的 <code>LaunchScreen.storyboard</code> 恢复回来。云端 run <code>42853265361</code> <b>构建失败、没有出包</b>：日志里 <code>ibtool</code> 命令根本没有 <code>--platform</code> 参数（旁边的 <code>actool</code> 却有 <code>--platform iphoneos</code>），依旧报 <code>LaunchScreen.storyboard: error: iOS 18.2 Platform Not Installed.</code>。这证明早期「加 <code>-sdk iphoneos</code> 就够了」的推断是错的。追到 Expo 源码后又发现，即便编译成功，文件名 <code>LaunchScreen</code> 也不满足 Expo 要的 <code>SplashScreen</code>。</p>
+
+<p>最终修复 <code>f70b008</code> 把两件事一次解决：</p>
+
+<table>
+  <tr><th style="width:32%">修复</th><th>内容与理由</th></tr>
+  <tr>
+    <td><b>提供 Expo 要的 storyboard</b></td>
+    <td><code>inject_ios.py</code> 从上游 <code>LaunchScreen.storyboard</code> 生成一份最小的 <code>SplashScreen.storyboard</code>，把 pbxproj 中 7 处 <code>LaunchScreen.storyboard</code> 的<b>文件名字符串</b>改为 <code>SplashScreen.storyboard</code>（对象结构不变），并设 <code>UILaunchStoryboardName = SplashScreen</code>。系统启动屏与 Expo 的 <code>UIStoryboard(name:)</code> 因此指向同一份编译产物 <code>SplashScreen.storyboardc</code>。</td>
+  </tr>
+  <tr>
+    <td><b>修掉 CI 的 ibtool 报错</b></td>
+    <td>生成时移除旧 RN 模板 XML 的 <code>&lt;dependencies&gt;</code>（内含 <code>&lt;deployment identifier="iOS"/&gt;</code>）和 <code>&lt;device&gt;</code>，并把 <code>toolsVersion</code> 刷新为 22505。这段旧元数据正是 ibtool 去查找不存在的「iOS 18.2」平台的来源。保留原有 scene、label 与约束，XML 解析校验通过。</td>
+  </tr>
+  <tr>
+    <td>iOS 跳过 Android 权限</td>
+    <td>把 <code>bootstrap.ts</code> 的 <code>} else {</code> 改为 <code>} else if (Platform.OS === "android") {</code>，iOS 不再调用 <code>check/request(PERMISSIONS.ANDROID.READ_EXTERNAL_STORAGE)</code> 等常量。iOS 本来就不需要存储权限。</td>
+  </tr>
+  <tr>
+    <td>顶层 StatusBar 调用加保护</td>
+    <td><code>src/entry/index.tsx</code> 在 React 挂载前、JS bundle 求值时就调用两个 Android-only API。改为包在 <code>if (Platform.OS === "android") { … }</code> 内，并补 <code>Platform</code> 导入，避免最早期 JS 执行被打断。</td>
+  </tr>
+  <tr>
+    <td>校验器加护栏</td>
+    <td><code>verify_adaptation.py</code> 扩到 <b>41 项</b>，断言 Expo storyboard 名字、ibtool 安全的 XML 与两处启动门控；<code>verify_ipa.py</code> 现在<b>缺少 <code>SplashScreen.storyboardc</code> 就直接判失败</b>，并打印需要递归签名的嵌套 framework 清单。用新校验器跑旧包确实报 <code>VERIFY FAILED</code>。</td>
+  </tr>
+</table>
+
+<div class="ok">
+  本地复验：<code>prepare.sh</code> → <b>41 checks, 0 failures</b>；生成的 <code>SplashScreen.storyboard</code> 通过 XML 解析（1 个 scene、无 dependencies/device），<code>plutil -lint</code> 校验 <code>project.pbxproj</code> 与 <code>Info.plist</code> 通过；<code>ruby -c</code>、<code>py_compile</code>、<code>bash -n</code>、TypeScript 5.7.3 <code>transpileModule</code>（5 个 TS/TSX 文件）全部通过。
+</div>
+
+<h2>3. 签名侧：这一步做不对，换了新包一样闪退</h2>
+
+<div class="danger">
+  <b>最常见的错误：</b>只重签 <code>MusicFree.app</code> 主程序，忽略 <code>Frameworks/hermes.framework</code>。未签名 IPA 里的每个动态框架都是无签名的，iOS 在启动时由 dyld 逐个校验；任何一个没有有效签名，进程会在 <code>main()</code> 之前被杀，用户看到的就是「图标点一下、白屏一下、回到桌面」，没有任何错误弹窗。
+</div>
+
+<h3>3.1 用签名工具（推荐，最少踩坑）</h3>
+
+<ul>
+  <li><b>Sideloadly / AltStore</b>：默认会遍历并递归签名 <code>Frameworks/</code>，一般无需额外设置。若 Sideloadly 里开了自定义选项，确认没有勾选「跳过动态库签名」之类项。</li>
+  <li><b>手机端签名工具（ESign、牛蛙助手、轻松签等）</b>：必须确认「签名 Frameworks / 动态库 / 递归签名」选项已开启。这类工具在只签主程序时最容易出问题。</li>
+  <li>签名用的描述文件（provisioning profile）要覆盖实际 bundle id。本包默认是 <code>com.musicfree.ios.unsigned</code>；很多工具会自动改成自己的通配 id，此时 entitlements 里的 <code>application-identifier</code> 必须跟着改，否则会「装得上、打不开」。</li>
+  <li>最低系统要求 <b>iOS 15.1</b>；低于此版本无法安装。</li>
+</ul>
+
+<div class="ok">
+  <b>先自检，别靠猜：</b>适配工程里带了 <code>scripts/verify_signed_ipa.sh</code>，在 macOS 上对签完的 IPA 跑一次即可确认框架有没有签上：
+  <pre style="margin:10px 0 0"><code>bash scripts/verify_signed_ipa.sh MusicFree-signed.ipa</code></pre>
+  它会逐个检查 <code>Frameworks/*.framework</code>、<code>PlugIns/*.appex</code>，再做一次 <code>codesign --verify --deep --strict</code>。拿未签名的原始包实测，输出就是 <code>[FAIL] framework NOT signed : hermes.framework — code object is not signed at all</code>，正是最容易导致闪退的那种状态。
+</div>
+
+<h3>3.2 手动 codesign（macOS，需要 Xcode 或 CommandLineTools）</h3>
+
+<p>顺序不能反：<b>先签最里层的框架，再签 .app，最后打包</b>。<code>--deep</code> 虽然省事，但 Apple 不推荐，手动逐个更可靠。</p>
+
+<pre><code># 0. 准备：把签名身份换成你自己的证书
+IDENTITY="Apple Development: Your Name (TEAMID)"
+ENT=entitlements.plist          # 见下方
+unzip -q MusicFree-v1.0.0-beta.4-unsigned.ipa -d work
+cd work/Payload
+
+# 1. 放入与证书/bundle id 匹配的描述文件
+cp /path/to/your.mobileprovision MusicFree.app/embedded.mobileprovision
+
+# 2. 【关键】逐个签嵌套 framework —— 这一步漏掉就会启动闪退
+find MusicFree.app/Frameworks -type d -name "*.framework" -print0 |
+while IFS= read -r -d '' fw; do
+  codesign --force --sign "$IDENTITY" \
+    --timestamp none --generate-entitlement-der "$fw" || exit 1
+done
+
+# 3. 再签整个 .app（带入 entitlements）
+codesign --force --sign "$IDENTITY" \
+  --entitlements "$ENT" --timestamp none \
+  --generate-entitlement-der MusicFree.app
+
+# 4. 自检：必须全部通过
+codesign --verify --deep --strict --verbose=2 MusicFree.app
+codesign -d --entitlements - MusicFree.app
+
+# 5. 重新打包成可安装的 ipa
+cd .. &amp;&amp; zip -qry ../MusicFree-signed.ipa Payload</code></pre>
+
+<p>entitlements 示例（<code>TEAMID</code> 换成你自己的 Team ID，bundle id 与描述文件保持一致）：</p>
+
+<pre><code>&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" ...&gt;
+&lt;plist version="1.0"&gt;
+&lt;dict&gt;
+  &lt;key&gt;application-identifier&lt;/key&gt;
+  &lt;string&gt;TEAMID.com.musicfree.ios.unsigned&lt;/string&gt;
+  &lt;key&gt;com.apple.developer.team-identifier&lt;/key&gt;
+  &lt;string&gt;TEAMID&lt;/string&gt;
+  &lt;key&gt;get-task-allow&lt;/key&gt;
+  &lt;true/&gt;
+&lt;/dict&gt;
+&lt;/plist&gt;</code></pre>
+
+<h2>4. 如果换了修复版、也按上面签了，仍然闪退</h2>
+
+<p>那就必须靠崩溃日志定位，静态分析到此为止。请按下面任一方式取日志：</p>
+
+<div class="step"><div class="n">1</div><div class="body"><b> iPhone 上直接导出（最方便）</b>
+  <span class="small">设置 → 隐私与安全性 → 分析与改进 → 分析数据，找以 <code>MusicFree</code> 开头、时间为刚才的 <code>.ips</code> 文件，导出后发我。</span>
+</div></div>
+<div class="step"><div class="n">2</div><div class="body"><b> macOS「控制台」App</b>
+  <span class="small">设备连上 Mac，打开「控制台」，左侧选设备，筛选进程名 <code>MusicFree</code>，复现闪退，导出对应时段的日志。</span>
+</div></div>
+<div class="step"><div class="n">3</div><div class="body"><b> 命令行实时日志</b>
+  <span class="small"><code>idevicesyslog</code>（libimobiledevice）或 <code>xcrun deviceconsole</code>，复现一次即可抓到 dyld / 异常栈。</span>
+</div></div>
+
+<p>日志里重点看这几类关键字，它们分别指向不同修复方向：</p>
+
+<table>
+  <tr><th style="width:42%">关键字</th><th>含义 / 下一步</th></tr>
+  <tr><td><code>dyld: Library not loaded: @rpath/hermes.framework</code>、<code>code signature invalid</code>、<code>SIGKILL / Code Signature Invalid</code></td><td>嵌套框架没签或签错 → 按第 3 节重签，换用 Sideloadly / AltStore 交叉验证</td></tr>
+  <tr><td><code>Could not find a storyboard named 'SplashScreen'</code> / <code>NSInvalidArgumentException</code> / 堆栈里有 <code>UIStoryboard</code> / <code>SplashScreenManager</code></td><td><b>旧包的真实主因</b>。修复版已把 <code>SplashScreen.storyboardc</code> 打进包；若仍出现，把新包的 <code>verify_ipa.py</code> 输出发我，确认资源是否真的进了 bundle</td></tr>
+  <tr><td><code>EXC_CRASH (SIGABRT)</code> + <code>NSInternalInconsistencyException</code></td><td>其它启动屏 / SplashScreen 相关原生异常，需要看完整堆栈定位</td></tr>
+  <tr><td><code>Terminated due to watchdog / 0x8badf00d</code></td><td>启动超时（~20s 未完成首帧），通常是 JS 初始化阻塞，需要看 <code>bootstrap</code> 阶段日志</td></tr>
+  <tr><td><code>Unknown permission</code> / <code>react-native-permissions</code></td><td>旧包才会出现，修复版已跳过 Android 权限分支</td></tr>
+</table>
+
+<div class="note">
+  <b>边界说清楚：</b>本机没有完整 Xcode（只有 CommandLineTools），无法跑 iOS 模拟器或真机；所有构建在 GitHub Actions 的 macOS runner 上完成，本机能做的是静态校验 + 产物结构校验。「修复版真机不再闪退」这一点必须由你在设备上确认，我不能替你下结论。
+</div>
+
+<h2>5. 该用哪个包</h2>
+
+<table>
+  <tr><th style="width:38%">文件</th><th>建议</th></tr>
+  <tr><td><code>MusicFree-v1.0.0-beta.4-unsigned.ipa</code><br><span class="small">SHA-256 <code>7621d109…</code>，旧包</span></td><td><span class="tag t-hard">弃用</span>缺 <code>SplashScreen.storyboardc</code>，Expo 原生启动必抛异常；新校验器已判失败。建议直接换修复版，不必在它上面反复试签名。</td></tr>
+  <tr><td><b>修复版未签名 IPA</b><br><span class="small">run <code>42857755459</code> 重建产物</span></td><td><span class="tag t-done">使用这个</span><code>SplashScreen.storyboardc</code> 已编进包、<code>UILaunchStoryboardName = SplashScreen</code>、iOS 启动分支已修正；签名时仍需递归签 <code>hermes.framework</code>。</td></tr>
+  <tr><td><code>musicfree-ios-adapter.zip</code></td><td>适配工程源码，含注入脚本、41 项静态校验与全部修复，可用于自行复现构建。</td></tr>
+</table>
+
+<footer>
+  MusicFree iOS 适配工程 · 上游 AGPL-3.0 · 本说明仅覆盖未签名 IPA 的自签与启动问题，灵动岛 / Widget Extension 接线仍是可选增强项，未包含在本次修复中。
+</footer>
+
+</div>
+</body>
+</html>

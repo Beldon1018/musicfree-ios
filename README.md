@@ -6,7 +6,7 @@
 
 当前锁定上游版本：`v1.0.0-beta.4`（见 `UPSTREAM_REF`）。
 
-**当前状态（2026-11-10）**：云端 macOS runner 已成功产出未签名 IPA —— `MusicFree-v1.0.0-beta.4-unsigned.ipa`，7,231,214 字节，SHA-256 `7621d109…06da2`，iOS 15.1+，`Payload/MusicFree.app/main.jsbundle` 已内嵌，无任何签名标记。构建与产物校验记录见 `VERIFICATION.md`（run `42845832731` / 提交 `83fd6c4`）。
+**当前状态（2026-11-10）**：云端 macOS runner 已跑通完整 Release archive；首次出包 run `42845832731`。用户反馈「签名后打开闪退」后追到 Expo SDK 52 的原生启动契约，最终修复为提交 `f70b008`（生成 `SplashScreen.storyboard` + 修 ibtool + iOS 启动分支门控），重建与产物校验见 `VERIFICATION.md`。静态校验 **41 项 0 失败**。产物为 iOS 15.1+ 的 arm64 未签名 IPA，内嵌 `main.jsbundle`；**自签时必须递归签名 `Frameworks/hermes.framework`**，见 [`docs/signing-and-crash-guide.html`](docs/signing-and-crash-guide.html)。
 
 ---
 
@@ -24,7 +24,9 @@ MusicFree 官方源码 (git tag, 每次重新检出)
         ├── inject_ios.py  幂等注入（内容感知，不依赖固定行号）
         │              · Podfile 挂本地 Pod
         │              · Info.plist 补后台音频 / ATS / 文件共享 / 实时活动
-        │              · pbxproj 换 Bundle ID、版本号、移除 storyboard 编译
+        │              · pbxproj 换 Bundle ID、版本号、启动屏改名为 SplashScreen
+        │              · 生成 SplashScreen.storyboard（Expo 原生启动必需）
+        │              · bootstrap.ts / index.tsx：iOS 跳过 Android-only 启动调用
         │
         └── scripts/   prepare → verify → build → verify_ipa
                        sync_upstream.py（检测新 tag、失败自动回滚）
@@ -48,11 +50,15 @@ MusicFree 官方源码 (git tag, 每次重新检出)
 | `NativeModules.Mp3Util`（本地音乐元数据） | `index.ios.ts` 覆盖：优先本地 Pod，缺 Pod 时返回空元数据，保证导入流程不崩 |
 | 3 个原生模块没有 iOS 实现 | `ios/LocalPods/MusicFreeNative`：Objective-C 实现的 `NativeUtils` / `Mp3Util` / `LyricUtil` + 可选 Live Activity 桥，用 CocoaPods 链接，**不改 `project.pbxproj` 的源文件列表** |
 | `Info.plist` 无后台音频、ATS 限制 | 幂等注入 `UIBackgroundModes=audio`、`NSAllowsArbitraryLoads`、`UIFileSharingEnabled`、`NSSupportsLiveActivities` 等 |
-| Xcode 16.2 在 CI 上编译 RN 模板 `LaunchScreen.storyboard` 报「iOS 18.2 Platform Not Installed」 | 幂等移除 storyboard 的 Resources 引用，改用 iOS 14+ `UILaunchScreen` plist 启动屏；`xcodebuild` 同时显式指定 `-sdk iphoneos` |
+| Expo SDK 52 原生启动硬编码 `UIStoryboard(name: "SplashScreen", bundle: nil)`，上游 RN 模板只有 `LaunchScreen.storyboard`，pod 也不自带 → 找不到就抛异常，真机打开即闪退 | 从上游 storyboard 生成一份最小 `SplashScreen.storyboard`，把 pbxproj 中 7 处文件名引用改为同名，并设 `UILaunchStoryboardName = SplashScreen`；系统启动屏与 Expo 共用一份 `SplashScreen.storyboardc` |
+| Xcode 16.2 在 CI 上编译旧 RN 模板 storyboard 报「iOS 18.2 Platform Not Installed」 | 生成 storyboard 时移除 `<dependencies>`（含 `<deployment identifier="iOS"/>`）与 `<device>`、刷新 `toolsVersion`，这段旧元数据才是 ibtool 去查不存在平台的根源。单独加 `-sdk iphoneos` **不足以**解决（run `42853265361` 已复现失败） |
+| 上游启动流程在 iOS 上误用 Android API | `bootstrap.ts` 的 Android 权限分支改为 `} else if (Platform.OS === "android") {`，不再调用 `PERMISSIONS.ANDROID.*`；`src/entry/index.tsx` 顶层的 `StatusBar.setBackgroundColor` / `setTranslucent` 同样按平台门控 |
 | Bundle ID 是 RN 模板值 | 改为 `com.musicfree.ios.unsigned`；版本号跟随上游 tag |
 | Expo 新架构开关不明确 | `ios/Podfile.properties.json` 明确 `newArchEnabled=false` + Hermes |
 
-其余 Android 痕迹（`BackHandler`、`Platform.OS === "android"` 分支、`react-native-fs`）本身都有 iOS 实现或已有条件分支，不需要改上游源码。
+其余 Android 痕迹（`BackHandler`、已有的 `Platform.OS === "android"` 分支、`react-native-fs`）本身都有 iOS 实现或已有条件分支。上面两处启动路径注入是唯一改写上游文件的地方，都是内容感知的最小条件化；锚点一旦变化，`inject_ios.py` 会明确报错，而不是静默产出一个装上去就崩的包。
+
+> **签名后打开闪退？** 见 [`docs/signing-and-crash-guide.html`](docs/signing-and-crash-guide.html)：区分「IPA 启动链问题」和「自签未递归签名 `hermes.framework`」，含 `codesign` 步骤与崩溃日志定位方法。
 
 ### 三个 Android 能力的 iOS 原生替代（不再只是 no-op）
 
@@ -87,7 +93,7 @@ gh run list --repo <你的用户名>/musicfree-ios --workflow build-ios-unsigned
 gh run download --repo <你的用户名>/musicfree-ios -n unsigned-ipa
 ```
 
-公开仓库的 macOS runner 免费；私有仓库按 10 倍费率消耗 Actions 分钟数，一个 RN 工程约 20 分钟/次。`bootstrap_github.sh` 会建仓库、推送代码、触发第一次构建。这条路已在 `Beldon1018/musicfree-ios` 上跑通：第三次构建 `42845832731` 成功，产物通过 `verify_ipa.py` 校验。
+公开仓库的 macOS runner 免费；私有仓库按 10 倍费率消耗 Actions 分钟数，一个 RN 工程约 20 分钟/次。`bootstrap_github.sh` 会建仓库、推送代码、触发第一次构建。这条路已在 `Beldon1018/musicfree-ios` 上跑通：首次成功出包是 run `42845832731`；之后根据「签名后闪退」反馈做了启动链修复并重建，过程与产物见 `VERIFICATION.md`。
 
 ### 路径 B：本地构建（需要完整 Xcode）
 
@@ -146,8 +152,10 @@ python3 scripts/sync_upstream.py --apply --ref v0.6.2        # 锁定某个 tag
 ## 六、限制与风险，如实说明
 
 - **未签名**：产物需 Sideloadly / AltStore / ESign 自签；免费 Apple ID 通常 7 天一签。Bundle ID `com.musicfree.ios.unsigned`，最低系统由上游 `IPHONEOS_DEPLOYMENT_TARGET = 15.1` 决定。
+- **必须递归签名嵌套框架**：包内含 `Payload/MusicFree.app/Frameworks/hermes.framework`。自签工具若只签主程序，dyld 会在启动阶段校验失败并直接杀掉进程，表现就是「打开即闪退」。手机端签名工具需开启「签名 Frameworks / 动态库」；手动 `codesign` 要先签框架再签 `.app`。完整步骤见 [`docs/signing-and-crash-guide.html`](docs/signing-and-crash-guide.html)。
+- **`verify_ipa.py` 会拒收缺启动屏的包**：校验器现在检查 `SplashScreen.storyboardc` 是否存在（Expo 原生启动必需），并列出需要递归签名的框架清单。旧包 `7621d109…` 用新校验器会被判定失败。签完包后可再用 `verify_signed_ipa.sh` 确认框架签全了。
 - **灵动岛是可选增强**：需要 iOS 16.1+（灵动岛形态还需 iPhone 14 Pro 及以后机型），且必须新增 Widget Extension target。`.appex` 要与 `.app` 一起签，AltStore 支持，手动 `codesign` 需先签 appex 再签 app；自签工具不支持时，直接不加该 target，App 内浮层仍可用，RN 桥会自动静默降级。
-- **编译验证已完成**：本地做了 35 项静态校验，云端 `macos-15` + Xcode 16.2 已完成完整 Release archive 与链接（三个 Objective-C 模块均通过 Clang）。当前工作机没有 Xcode，因此**本地无法复现构建**，只能改代码后推到仓库触发 CI；若上游升级后某个第三方 RN 依赖缺 iOS podspec，仍需按日志补 Pod 或换实现。
+- **编译验证已完成**：本地做了 41 项静态校验（含 Expo storyboard 名字、ibtool 安全 XML、iOS 启动分支断言），云端 `macos-15` + Xcode 16.2 已完成完整 Release archive 与链接（三个 Objective-C 模块均通过 Clang）。当前工作机没有完整 Xcode，因此**本地无法跑模拟器/真机**，只能做静态校验 + 推到仓库触发 CI；「真机不再闪退」必须由使用者在设备上确认，若仍崩溃需按签名指南导出 `.ips` 崩溃日志。若上游升级后某个第三方 RN 依赖缺 iOS podspec，仍需按日志补 Pod 或换实现。
 - **AGPL-3.0**：上游是强传染性许可，本适配层同样受其约束；仓库根目录已放 `LICENSE`（AGPL-3.0 全文，取自上游），分发 IPA 时请一并公开对应源码。
 - **不是官方产物**：请勿把它当作 MusicFree 官方 iOS 版对外发布；插件可用性取决于上游音源状态。
 
@@ -167,11 +175,18 @@ scripts/
   lib.sh                        公共函数（检出/重置/复制）
   prepare.sh                    一键生成适配后的工程（幂等）
   inject_ios.py                 幂等注入 Podfile / Info.plist / pbxproj
-  verify_adaptation.py          无需 Xcode 的静态校验
+                                + 生成 SplashScreen.storyboard
+                                + bootstrap.ts / index.tsx 启动门控
+  verify_adaptation.py          无需 Xcode 的静态校验（41 项）
   sync_upstream.py              检测/应用上游新 tag，失败回滚
   build_unsigned_ipa.sh         Release archive → 未签名 IPA
-  verify_ipa.py                 校验产物未签名且含 main.jsbundle
+  verify_ipa.py                 校验未签名、含 main.jsbundle、含
+                                SplashScreen.storyboardc，并列出需递归签名的框架
+  verify_signed_ipa.sh          签完包后自检：框架 / extension / deep 签名
   bootstrap_github.sh           一键建仓推送并触发首次构建
+docs/
+  ios-native-alternatives.html  三项能力的 iOS 原生替代方案
+  signing-and-crash-guide.html  自签步骤与启动闪退排查
 .github/workflows/
   build-ios-unsigned.yml        macOS 云端构建（可被复用）
   sync-upstream.yml             每日同步 + 发 Release + 失败告警

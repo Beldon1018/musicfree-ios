@@ -68,3 +68,92 @@
 - **上游新版全链路**：自动同步的「已是最新 → 跳过」分支已验证；「发现新 tag → 重新构建 → 发 Release」尚未真实触发过一次。
 
 `verify_adaptation.py` 会在上游新增 Android-only 原生模块时提前报错，避免静默产出坏包。云端各次日志保留在 `outputs/cloud-build/`，便于按日志继续迭代。
+
+---
+
+## 启动闪退诊断与修复（用户反馈「ios签名打开闪退」，提交 `a4f3d63`）
+
+**先纠正一处此前的过度修复。** run `42838707999` 的报错是 `CompileStoryboard LaunchScreen.storyboard: error: iOS 18.2 Platform Not Installed.`，当时同时做了两件事：给 `xcodebuild` 加 `-sdk iphoneos`，以及删掉启动屏 storyboard。前者才是真正的修复；后者是多余动作，并且造成新 bug —— 产物里**一个启动屏资源都没有**，而上游 `bootstrap.ts` 会调用 `expo-splash-screen`，`AppDelegate` 又是 `EXAppDelegateWrapper`。旧包用新校验器复核直接判失败：`VERIFY FAILED: no compiled launch screen in bundle`。
+
+### 逐项复核旧包（结论：编译没问题，启动链有问题）
+
+| 检查 | 结果 |
+| --- | --- |
+| `Payload/MusicFree.app`、arm64 Mach-O、可执行文件 | 正常 |
+| `main.jsbundle` | 6,321,199 字节，Hermes bytecode magic `c61fbc03c103191f` 正确 |
+| 根组件名一致性 | `app.json` = `AppRegistry.registerComponent` = `AppDelegate.moduleName` = `MusicFree`；Release 走本地 bundle，不依赖 Metro |
+| iOS 平台覆盖是否进包 | `MusicFreeLiveActivity` / `liveCall` 在 bundle 内；上游 Android LyricUtil monkey patch 标记不在，说明 `index.ios.ts` 生效 |
+| 签名状态 | 确实未签名（4 类签名标记全为 0） |
+| `.appex` | 无，灵动岛未接线，不参与启动 |
+| **启动屏资源** | **0 个**：无 `LaunchScreen.storyboardc` / `.nib` / `Assets.car`；plist 中 `UILaunchStoryboardName = None`，仅 `UILaunchScreen = {}` |
+| **嵌套动态框架** | `Frameworks/hermes.framework/hermes` —— 自签时必须递归签名，否则 dyld 在 `main()` 之前终止进程 |
+| JS 启动分支 | `bootstrap.ts` 在 iOS 上走 `PERMISSIONS.ANDROID.*`；`src/entry/index.tsx` 在模块顶层调用 Android-only 的 `StatusBar.setBackgroundColor` / `setTranslucent` |
+
+置信度说明：启动屏缺失与 Android-only 启动调用是**可确证的包内事实**，已在源码侧修复。`hermes.framework` 未递归签名是自签场景下概率最高的解释，但只有真机崩溃日志才能最终确认。另外 `bootstrap.ts` 的权限异常其实会被外层 `try/catch` 接住，更可能表现为「初始化出错」界面而非进程闪退 —— 它仍是必须修的真实 bug，但不作为闪退唯一根因。
+
+### 修复内容
+
+| 文件 | 改动 |
+| --- | --- |
+| `scripts/inject_ios.py` | 恢复 `UILaunchStoryboardName = LaunchScreen`、移除 `UILaunchScreen = {}`、**不再**从 pbxproj 删除 `LaunchScreen.storyboard in Resources`；新增 `inject_bootstrap()` 与 `inject_entry_index()`，把两处 Android-only 启动调用按 `Platform.OS === "android"` 门控；保留 `-sdk iphoneos` |
+| `scripts/verify_adaptation.py` | 断言反转为「启动屏必须保留」，新增启动分支断言，35 → **38 项** |
+| `scripts/verify_ipa.py` | 新增启动屏资源检查（缺失即判失败）与 `nested_frameworks_to_resign` 输出，签包前就提示需要递归签名的框架 |
+| `docs/signing-and-crash-guide.html` | 新增：诊断证据、`codesign` 顺序（先框架后 `.app`）、entitlements 示例、崩溃日志导出与关键字对照 |
+| `scripts/verify_signed_ipa.sh` | 新增：签完包后逐个校验 `Frameworks/*.framework`、`PlugIns/*.appex` 并执行 `codesign --verify --deep --strict`。用未签名原始包实测，输出 `[FAIL] framework NOT signed : hermes.framework — code object is not signed at all`，证明脚本能抓到这类问题；`bash -n` 通过 |
+
+### 本地复验（修复后，未依赖云端）
+
+| 项 | 结果 |
+| --- | --- |
+| `prepare.sh` | **38 checks, 0 failures**，注入报告包含 `iOS skips PERMISSIONS.ANDROID.*`、`Android-only StatusBar calls gated` |
+| 幂等性 | `prepare.sh` 连跑两次，5 个注入文件聚合 SHA-256 一致：`b0cf3f72…eff2040` |
+| `plutil -lint` | 主 App `Info.plist` / `project.pbxproj` 均 OK；`UILaunchStoryboardName = LaunchScreen`、`UILaunchScreen` 已不存在 |
+| `ruby -c` / `py_compile` / `bash -n` | 全部通过 |
+| TypeScript 5.7.3 `transpileModule` | 5 个文件（`bootstrap.ts`、`index.tsx`、3 个 `index.ios.ts`）0 错误 |
+| 旧包反向验证 | 新 `verify_ipa.py` 判 `VERIFY FAILED: no compiled launch screen in bundle`，`launch_screen_resources = 0`，`nested_frameworks_to_resign = ["hermes.framework"]` |
+
+### 仍必须由用户确认的边界
+
+本机只有 CommandLineTools，没有完整 Xcode，**无法跑模拟器或真机**。所有构建在 macOS runner 完成，本机只能做静态校验与产物结构校验。「修复版真机不再闪退」需用户在设备上确认；若仍崩溃，按 `docs/signing-and-crash-guide.html` 导出 `.ips`，重点看 `dyld: Library not loaded` / `code signature invalid`（签名问题）还是 `EXSplashScreen` 相关的 `NSInternalInconsistencyException`（启动屏问题）。
+
+---
+
+## 更正：真正的启动崩溃根因与最终修复（提交 `f70b008`）
+
+> 上一节把「加 `-sdk iphoneos` 就是 `ibtool` 的真正修复」当成结论，**这是错的**。按上一节方案恢复 `LaunchScreen.storyboard` 后，run `42853265361` 仍在 `CompileStoryboard` 阶段失败、**没有产出 IPA**。以下是更正后的结论。
+
+### 证据链
+
+1. 失败日志第 54938 行显示 `ibtool` 命令**没有 `--platform` 参数**（同一构建里的 `actool` 却带 `--platform iphoneos`），随后报 `LaunchScreen.storyboard: error: iOS 18.2 Platform Not Installed.`。所以 `-sdk iphoneos` 不能让 ibtool 正确解析平台。
+2. 上游 storyboard 是旧 RN 模板，含 `<dependencies><deployment identifier="iOS"/>…</dependencies>` 与 `<device id="retina4_7" .../>`，`toolsVersion="15702"`。这段元数据是 ibtool 去查找「iOS 18.2」平台的来源。
+3. 查 Expo SDK 52 源码（GitHub `sdk-52` 分支）：
+   - `SplashScreenAppDelegateSubscriber.swift` → `customizeRootView(_:)` 调用 `SplashScreenManager.shared.initWith(rootView)`；
+   - `SplashScreenManager.swift` → `initWith` 无条件调用 `showSplashScreen()`，其中硬编码 `UIStoryboard(name: "SplashScreen", bundle: nil)`；`UIStoryboard(name:)` 找不到资源会抛异常；
+   - `ExpoSplashScreen.podspec` 的 `source_files` 只有 `**/*.{h,m,swift}`，**不自带任何 storyboard 资源**。
+   - 上游 RN 模板只有 `LaunchScreen.storyboard`，名字不匹配。
+
+   → 旧包在 React Native 挂载之前、由 Expo 的 AppDelegate subscriber 触发原生异常，这就是「打开即闪退」的主因；与 JS 里是否调用 `SplashScreen` 无关。
+
+### 最终修复（`f70b008`）
+
+| 改动 | 内容 |
+| --- | --- |
+| `inject_storyboard()` | 从上游 `LaunchScreen.storyboard` 生成一份最小 `SplashScreen.storyboard`：移除 `<dependencies>` 与 `<device>`、`toolsVersion` 改为 22505，保留 scene/label/约束。同时满足系统启动屏与 Expo 的硬编码查找 |
+| `inject_info_plist()` | `UILaunchStoryboardName = "SplashScreen"`，移除 `UILaunchScreen = {}` |
+| `inject_pbxproj()` | 把 7 处 `LaunchScreen.storyboard` **文件名字符串**替换为 `SplashScreen.storyboard`；pbxproj 对象结构不变，`plutil -lint` 通过 |
+| `verify_adaptation.py` | 41 项：断言 plist 指向 `SplashScreen`、pbxproj 无残留 `LaunchScreen` 引用、storyboard XML 无 dependencies/device、仍有 launch scene |
+| `verify_ipa.py` | 缺少 `SplashScreen.storyboardc` 直接判失败；新增 `expo_splash_screen_present` 字段 |
+| 保留 | `bootstrap.ts` / `index.tsx` 的 Android 门控、`verify_signed_ipa.sh`、`-sdk iphoneos` |
+
+### 本地复验
+
+| 项 | 结果 |
+| --- | --- |
+| `prepare.sh` | **41 checks, 0 failures**；注入报告含 `UILaunchStoryboardName = SplashScreen`、`LaunchScreen.storyboard -> SplashScreen.storyboard (7 places)`、`SplashScreen.storyboard generated` |
+| 生成的 storyboard | XML 解析通过：`scenes=1`、`has dependencies=False`、`has device=False`、`initialViewController` 仍在 |
+| `plutil -lint` | `project.pbxproj` / `Info.plist` 均 OK；`UILaunchStoryboardName = SplashScreen` |
+| 脚本语法 | `py_compile`、`bash -n`、TypeScript `transpileModule` 全部通过 |
+
+### 云端构建
+
+run `42857755459`（提交 `f70b008`）用于验证清理后的 storyboard 能否通过该 runner 的 `ibtool` 并产出含 `SplashScreen.storyboardc` 的 IPA。结果见本节追加的产物校验记录。
