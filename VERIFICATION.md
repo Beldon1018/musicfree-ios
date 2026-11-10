@@ -200,3 +200,47 @@ SplashScreen.storyboard: error: iOS 18.2 Platform Not Installed.
 ### 待填
 
 run `42861878571`（提交 `5228820`）第一次失败：平台步骤的 "iOS 18" 判断误判（runner 已装 18.5/18.6/26.x 属于别的 Xcode），漏掉了 `downloadPlatform`，冒烟测试立刻复现 `iOS 18.2 Platform Not Installed.`。已将安装改为**无条件执行**（匹配所选 Xcode 的 18.2 runtime），重新提交并重建，结果见下一节产物校验记录。
+
+---
+
+## 最终修复版产物（run `42863975900`，提交 `c8a13af` · 已成功）
+
+`xcodebuild -downloadPlatform iOS` 装回 iOS 18.2 runtime 后，冒烟测试通过，完整 Release archive 成功，IPA 经 `verify_ipa.py` 通过。
+
+### `verify_ipa.py` 实测（本地，`scripts/verify_ipa.py`）
+
+```json
+{
+  "bytes": 7235006,
+  "sha256": "15d56628e4b7b7ae4e5e1be93ca67db59e5fc774383774dd2e3b391eab995602",
+  "bundle_id": "com.musicfree.ios.unsigned",
+  "marketing_version": "1.0.0",
+  "build_version": "1",
+  "min_os": "15.1",
+  "js_bundle_included": true,
+  "executable_included": true,
+  "launch_screen_resources": 4,
+  "expo_splash_screen_present": true,
+  "nested_frameworks_to_resign": ["hermes.framework"],
+  "signature_files": [],
+  "unsigned": true
+}
+```
+
+解包后确认：
+
+| 检查 | 结果 |
+| --- | --- |
+| `SplashScreen.storyboardc` | 存在，4 个条目：`Info.plist` + `01J-lp-oVM-view-Ze5-6b-2t3.nib` + `UIViewController-01J-lp-oVM.nib`（即 Expo 原生启动要找的资源，旧包为 0） |
+| `UILaunchStoryboardName` | `SplashScreen`（旧包曾被设为 `None` / `UILaunchScreen = {}`） |
+| `UILaunchScreen` | 已不存在 |
+| `NSSupportsLiveActivities` | `true` |
+| `UIBackgroundModes` | `audio` |
+| 启动分支 | `bootstrap.ts` 不再走 `PERMISSIONS.ANDROID.*`；`index.tsx` 顶层 `StatusBar` 已按平台门控 |
+| `Frameworks/hermes.framework` | 仍在包内，**自签时必须递归签名**（见签名指南） |
+
+### 结论
+
+- **可交付**：`outputs/MusicFree-v1.0.0-beta.4-unsigned.ipa`（SHA-256 前缀 `15d56628…`），iOS 15.1+ arm64 未签名包，内嵌 `main.jsbundle`，含 Expo 启动所需 `SplashScreen.storyboardc`。
+- **旧包 `7621d109…` 已废弃**：已移到 `outputs/cloud-build/archive-deprecated-7621d109.ipa`，请勿再使用。
+- **仍需真机确认**的边界不变：灵动岛 Swift 源码未接线、浮层/ID3 解码/后台音频行为、自签安装、自动同步全链路。用户自签后若仍闪退，按 `docs/signing-and-crash-guide.html` 导出 `.ips`，重点看 `code signature invalid` / `Library not loaded`（签名）还是 Expo splash 相关异常（启动屏）。

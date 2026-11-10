@@ -6,7 +6,7 @@
 
 当前锁定上游版本：`v1.0.0-beta.4`（见 `UPSTREAM_REF`）。
 
-**当前状态（2026-11-10）**：云端 macOS runner 已跑通完整 Release archive；首次出包 run `42845832731`。用户反馈「签名后打开闪退」后追到 Expo SDK 52 的原生启动契约：它在原生阶段硬编码 `UIStoryboard(name: "SplashScreen")`，旧包没有该资源。`f70b008` 生成了 `SplashScreen.storyboard` 并修了 iOS 启动分支；此后又查明 `ibtool: iOS 18.2 Platform Not Installed.` 是 [GitHub `macos-15` runner 镜像缺陷](https://github.com/actions/runner-images/issues/13560)（与 storyboard 内容无关），`5228820` 在 CI 里补 `xcodebuild -downloadPlatform iOS` 并加了快速 `ibtool` 冒烟测试。静态校验 **41 项 0 失败**，修复版产物校验见 `VERIFICATION.md`。产物为 iOS 15.1+ 的 arm64 未签名 IPA，内嵌 `main.jsbundle`；**自签时必须递归签名 `Frameworks/hermes.framework`**，见 [`docs/signing-and-crash-guide.html`](docs/signing-and-crash-guide.html)。
+**当前状态（2026-11-11）**：修复版未签名 IPA 已产出并校验通过。根因有两类 —— ① Expo SDK 52 原生启动硬编码 `UIStoryboard(name: "SplashScreen")`，旧包缺该资源；② [GitHub `macos-15` runner 镜像缺陷](https://github.com/actions/runner-images/issues/13560) 导致 `ibtool` 报 `iOS 18.2 Platform Not Installed.`（与 storyboard 内容无关）。`c8a13af` 在 CI 里无条件执行 `xcodebuild -downloadPlatform iOS` 并加 `ibtool` 冒烟测试，run `42863975900` 成功，产物 `verify_ipa.py` 通过（含 `SplashScreen.storyboardc`）。SHA-256 `15d56628…`，iOS 15.1+、arm64、未签名、内嵌 `main.jsbundle`。**自签时必须递归签名 `Frameworks/hermes.framework`**，见 [`docs/signing-and-crash-guide.html`](docs/signing-and-crash-guide.html)。完整记录见 `VERIFICATION.md`。
 
 ---
 

@@ -71,7 +71,7 @@
   <div class="meta">
     <span>2026-11-10</span>
     <span>上游 v1.0.0-beta.4</span>
-    <span>修复提交 5228820</span>
+    <span>修复提交 c8a13af</span>
     <span>静态校验 41/41</span>
     <span>适用：未签名 IPA 自签</span>
   </div>
@@ -245,7 +245,7 @@ cd .. &amp;&amp; zip -qry ../MusicFree-signed.ipa Payload</code></pre>
 <table>
   <tr><th style="width:38%">文件</th><th>建议</th></tr>
   <tr><td><code>MusicFree-v1.0.0-beta.4-unsigned.ipa</code><br><span class="small">SHA-256 <code>7621d109…</code>，旧包</span></td><td><span class="tag t-hard">弃用</span>缺 <code>SplashScreen.storyboardc</code>，Expo 原生启动必抛异常；新校验器已判失败。建议直接换修复版，不必在它上面反复试签名。</td></tr>
-  <tr><td><b>修复版未签名 IPA</b><br><span class="small">run <code>42861878571</code> 重建产物</span></td><td><span class="tag t-done">使用这个</span>修复后产物：包含 <code>SplashScreen.storyboardc</code>、<code>UILaunchStoryboardName = SplashScreen</code>、iOS 启动分支已修正；<b>签名时仍必须递归签 <code>hermes.framework</code></b>。该包通过 <code>verify_ipa.py</code> 后才会交付。</td></tr>
+  <tr><td><b>修复版未签名 IPA</b><br><span class="small">run <code>42863975900</code> · SHA-256 <code>15d56628…</code></span></td><td><span class="tag t-done">使用这个</span>已通过 <code>verify_ipa.py</code>：含 <code>SplashScreen.storyboardc</code>（4 条目）、<code>UILaunchStoryboardName = SplashScreen</code>、iOS 启动分支已修正；<b>签名时仍必须递归签 <code>hermes.framework</code></b>。</td></tr>
   <tr><td><code>musicfree-ios-adapter.zip</code></td><td>适配工程源码，含注入脚本、41 项静态校验与全部修复，可用于自行复现构建。</td></tr>
 </table>
 
