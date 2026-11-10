@@ -6,9 +6,17 @@
  * pod is linked, and degrade gracefully to empty metadata otherwise, so local
  * music import never crashes on an undefined NativeModules.Mp3Util.
  *
- * Known limitation: ID3 tag writing / embedded lyric reading are Android-only
- * upstream features; the iOS pod returns empty values instead of rejecting, so
- * the caller's existing promise flow keeps working.
+ * iOS-native behaviour of the previously degraded features:
+ *   - getLyric: reads embedded ID3v2 USLT/SYLT and iTunes lyrics frames via
+ *     AVURLAsset.metadata (the same frames Android reads with jaudiotagger).
+ *   - setMediaTag: does NOT rewrite the audio file. It stores an in-app
+ *     metadata override which getBasicMeta/getMediaMeta/getLyric/getMediaTag
+ *     merge on top of the file's own tags. Editing tags therefore works from
+ *     the user's point of view while the sandbox source file stays untouched.
+ *   - getMediaTag: returns merged override + embedded values.
+ *
+ * The JS fallback below is only used if the pod is not linked at all; it stays
+ * intentionally empty rather than rejecting so upstream's promise flow holds.
  */
 import { NativeModules } from "react-native";
 

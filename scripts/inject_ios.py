@@ -76,6 +76,29 @@ def inject_info_plist(path: Path) -> list[str]:
         data["ITSAppUsesNonExemptEncryption"] = False
         changes.append("ITSAppUsesNonExemptEncryption = false")
 
+    # GitHub Actions macOS runners ship the iPhoneOS SDK but ibtool cannot
+    # resolve a matching "iOS 18.2 Platform" while compiling the RN template's
+    # LaunchScreen.storyboard -> "error: iOS 18.2 Platform Not Installed."
+    # An Info.plist launch screen (iOS 14+) needs no storyboard compilation at
+    # all, which is both deterministic on CI and harmless on a real device.
+    if data.pop("UILaunchStoryboardName", None) is not None:
+        changes.append("UILaunchStoryboardName removed (ibtool CI workaround)")
+    if "UILaunchScreen" not in data:
+        data["UILaunchScreen"] = {}
+        changes.append("UILaunchScreen = {} (plist-based launch screen)")
+
+    # Capability keys for the optional Dynamic Island / Live Activity module.
+    # They are inert until a Widget Extension target is added, so it is safe to
+    # always emit them; the Swift sources use #available(iOS 16.1, *) guards.
+    for key, label in (
+        ("NSSupportsLiveActivities", "NSSupportsLiveActivities = true"),
+        ("NSSupportsLiveActivitiesFrequentUpdates",
+         "NSSupportsLiveActivitiesFrequentUpdates = true"),
+    ):
+        if data.get(key) is not True:
+            data[key] = True
+            changes.append(label)
+
     if changes:
         with path.open("wb") as fh:
             plistlib.dump(data, fh, sort_keys=True)
@@ -112,6 +135,17 @@ def inject_pbxproj(path: Path, ref: str) -> list[str]:
     )
     if n:
         changes.append(f"CURRENT_PROJECT_VERSION -> {build_number} ({n} places)")
+
+    # Drop LaunchScreen.storyboard from the Resources build phase (and its
+    # PBXBuildFile entry). Keeping the orphan PBXFileReference / group entry is
+    # intentional: it keeps the diff tiny and Xcode tolerates it. Without this,
+    # ibtool fails on CI with "iOS 18.2 Platform Not Installed".
+    text, n = re.subn(
+        r'^\s*[0-9A-Fa-f]{24}\s+/\* LaunchScreen\.storyboard in Resources \*/[^\n]*\n',
+        '', text, flags=re.M,
+    )
+    if n:
+        changes.append(f"LaunchScreen.storyboard removed from Resources ({n} refs)")
 
     if text != original:
         path.write_text(text, encoding="utf-8")

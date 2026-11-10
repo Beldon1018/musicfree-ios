@@ -15,13 +15,14 @@ MusicFree 官方源码 (git tag, 每次重新检出)
         │
         ├── overlay/   新增文件（上游没有）→ 直接覆盖复制，永不冲突
         │              · 3 个 index.ios.ts 平台覆盖
-        │              · 本地 Pod：iOS 原生模块 + podspec
+        │              · 本地 Pod：iOS 原生模块（浮层 / ID3 / 覆盖层）+ podspec
+        │              · LiveActivity/：灵动岛 Swift 源码（默认未接线，自动降级）
         │              · Podfile.properties.json
         │
         ├── inject_ios.py  幂等注入（内容感知，不依赖固定行号）
         │              · Podfile 挂本地 Pod
-        │              · Info.plist 补后台音频 / ATS / 文件共享
-        │              · pbxproj 换 Bundle ID 与版本号
+        │              · Info.plist 补后台音频 / ATS / 文件共享 / 实时活动
+        │              · pbxproj 换 Bundle ID、版本号、移除 storyboard 编译
         │
         └── scripts/   prepare → verify → build → verify_ipa
                        sync_upstream.py（检测新 tag、失败自动回滚）
@@ -40,17 +41,36 @@ MusicFree 官方源码 (git tag, 每次重新检出)
 
 | 上游阻塞点 | 适配方式 |
 | --- | --- |
-| `NativeModules.LyricUtil` 为 undefined，启动即崩 | `overlay/src/native/lyricUtil/index.ios.ts`：Metro 平台后缀覆盖，保留 `NativeTextAlignment` 枚举与全部方法，全部 no-op |
+| `NativeModules.LyricUtil` 为 undefined，启动即崩 | `overlay/src/native/lyricUtil/index.ios.ts`：Metro 平台后缀覆盖，保留 `NativeTextAlignment` 枚举与全部方法，委托本地 Pod 的浮层 + 可选灵动岛联动 |
 | `NativeModules.NativeUtils`（bootstrap / 面板 / 抽屉要用） | `index.ios.ts` 覆盖：优先本地 Pod，缺 Pod 时回退纯 JS `Dimensions.get('window')` |
 | `NativeModules.Mp3Util`（本地音乐元数据） | `index.ios.ts` 覆盖：优先本地 Pod，缺 Pod 时返回空元数据，保证导入流程不崩 |
-| 3 个原生模块没有 iOS 实现 | `ios/LocalPods/MusicFreeNative`：Objective-C 实现的 `NativeUtils` / `Mp3Util`，用 CocoaPods 链接，**不改 `project.pbxproj` 的源文件列表** |
-| `Info.plist` 无后台音频、ATS 限制 | 幂等注入 `UIBackgroundModes=audio`、`NSAllowsArbitraryLoads`、`UIFileSharingEnabled` 等 |
+| 3 个原生模块没有 iOS 实现 | `ios/LocalPods/MusicFreeNative`：Objective-C 实现的 `NativeUtils` / `Mp3Util` / `LyricUtil` + 可选 Live Activity 桥，用 CocoaPods 链接，**不改 `project.pbxproj` 的源文件列表** |
+| `Info.plist` 无后台音频、ATS 限制 | 幂等注入 `UIBackgroundModes=audio`、`NSAllowsArbitraryLoads`、`UIFileSharingEnabled`、`NSSupportsLiveActivities` 等 |
+| Xcode 16.2 在 CI 上编译 RN 模板 `LaunchScreen.storyboard` 报「iOS 18.2 Platform Not Installed」 | 幂等移除 storyboard 的 Resources 引用，改用 iOS 14+ `UILaunchScreen` plist 启动屏；`xcodebuild` 同时显式指定 `-sdk iphoneos` |
 | Bundle ID 是 RN 模板值 | 改为 `com.musicfree.ios.unsigned`；版本号跟随上游 tag |
 | Expo 新架构开关不明确 | `ios/Podfile.properties.json` 明确 `newArchEnabled=false` + Hermes |
 
 其余 Android 痕迹（`BackHandler`、`Platform.OS === "android"` 分支、`react-native-fs`）本身都有 iOS 实现或已有条件分支，不需要改上游源码。
 
-**功能差异（iOS 端降级项）**：状态栏悬浮歌词（iOS 无该能力）、ID3 标签写入、内嵌歌词读取。本地音乐的标题/艺术家/专辑/时长/封面由 AVFoundation 提供。插件协议、播放、下载、WebDAV 等 JS 层能力不受影响。
+### 三个 Android 能力的 iOS 原生替代（不再只是 no-op）
+
+Android 的三项能力在 iOS 上不做「照搬」，而是换成 iOS 自己的形态：
+
+| Android 原能力 | iOS 方案 | 落地位置 | 状态 |
+| --- | --- | --- | --- |
+| 状态栏 / 悬浮窗歌词 | App 内**可拖动歌词浮层**（透明 UIWindow，非卡片区域触摸穿透） | `LyricUtilModule.m` | 默认启用 |
+| 状态栏 / 悬浮窗歌词 | **灵动岛 / 锁屏实时活动**（ActivityKit + Widget Extension） | `overlay/ios/LiveActivity/` | 源码齐备，需一次性接线 |
+| 内嵌歌词读取（jaudiotagger `FieldKey.LYRICS`） | AVFoundation 读 ID3v2 `USLT`/`SYLT`、iTunes `©lyr` 帧 | `Mp3UtilModule.m` | 默认启用 |
+| ID3 标签写入（改写音频文件） | **应用内元数据覆盖层**：编辑结果存 `Documents/`，读取时与文件标签合并，不碰原始音频 | `Mp3UtilModule.m` | 默认启用 |
+
+补充说明：
+
+- 上游 `plugin.ts` 的 `getLyric()` 在内嵌歌词为空时会回退到同名 `.lrc`，因此**外置歌词一直可用**。
+- 上游 TS/UI 层**从未调用** `setMediaTag` / `getMediaTag`（只有接口声明和 Android 原生实现），所以覆盖层刻意做在 Pod 内，让 `getBasicMeta` / `getMediaMeta` / `getLyric` 直接生效，无需改上游源码。
+- 本地音乐的标题/艺术家/专辑/时长/封面由 AVFoundation 提供；插件协议、播放、下载、WebDAV 等 JS 层能力不受影响。
+- 灵动岛模块通过 `NSClassFromString` 运行时解析 Swift 控制器：**没接 Widget Extension 时自动静默降级**，默认构建完全不受影响。接线步骤见 `overlay/ios/LiveActivity/README.md`。
+
+详见 `outputs/MusicFree-iOS-原生替代方案.html`（完整方案、系统/自签限制与实施顺序）。
 
 ---
 
@@ -124,6 +144,7 @@ python3 scripts/sync_upstream.py --apply --ref v0.6.2        # 锁定某个 tag
 ## 六、限制与风险，如实说明
 
 - **未签名**：产物需 Sideloadly / AltStore / ESign 自签；免费 Apple ID 通常 7 天一签。Bundle ID `com.musicfree.ios.unsigned`，最低系统由上游 `IPHONEOS_DEPLOYMENT_TARGET = 15.1` 决定。
+- **灵动岛是可选增强**：需要 iOS 16.1+（灵动岛形态还需 iPhone 14 Pro 及以后机型），且必须新增 Widget Extension target。`.appex` 要与 `.app` 一起签，AltStore 支持，手动 `codesign` 需先签 appex 再签 app；自签工具不支持时，直接不加该 target，App 内浮层仍可用，RN 桥会自动静默降级。
 - **编译验证的边界**：这套适配层在本地做了完整的静态校验（平台覆盖完整性、Pod 接线、plist 能力、pbxproj bundle 阶段、产物签名结构），但**构建用的 `xcodebuild` 必须在装有完整 Xcode 的 macOS 上跑**。当前工作机没有 Xcode，所以第一次云端构建是真正的验证点；若某个第三方 RN 依赖缺 iOS podspec，需要按日志补 Pod 或换实现。
 - **AGPL-3.0**：上游是强传染性许可，本适配层同样受其约束；仓库根目录已放 `LICENSE`（AGPL-3.0 全文，取自上游），分发 IPA 时请一并公开对应源码。
 - **不是官方产物**：请勿把它当作 MusicFree 官方 iOS 版对外发布；插件可用性取决于上游音源状态。
@@ -136,7 +157,9 @@ python3 scripts/sync_upstream.py --apply --ref v0.6.2        # 锁定某个 tag
 UPSTREAM_REF                     当前锁定的上游 tag
 overlay/                        适配层新增文件（同步时全部重放）
   src/native/*/index.ios.ts      3 个 Metro 平台覆盖
-  ios/LocalPods/MusicFreeNative/ iOS 原生模块 + podspec
+  ios/LocalPods/MusicFreeNative/ iOS 原生模块（LyricUtil / Mp3Util / NativeUtils
+                                 + 可选 Live Activity 桥）+ podspec
+  ios/LiveActivity/              灵动岛 / 锁屏实时活动 Swift 源码 + 接线说明
   ios/Podfile.properties.json    Expo 构建开关
 scripts/
   lib.sh                        公共函数（检出/重置/复制）

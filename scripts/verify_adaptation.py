@@ -79,6 +79,11 @@ def main() -> int:
         check((plist.get("NSAppTransportSecurity") or {}).get("NSAllowsArbitraryLoads") is True,
               "arbitrary loads allowed (plugin sources use http)")
         check(plist.get("UIFileSharingEnabled") is True, "document/file sharing enabled")
+        check(plist.get("UILaunchStoryboardName") is None,
+              "storyboard launch removed (ibtool CI workaround)")
+        check("UILaunchScreen" in plist, "plist-based launch screen present")
+        check(plist.get("NSSupportsLiveActivities") is True,
+              "Live Activity capability declared")
     else:
         check(False, "Info.plist exists")
 
@@ -89,6 +94,40 @@ def main() -> int:
     check("export:embed" in pbx_text or "react-native-xcode.sh" in pbx_text,
           "Release archive will embed main.jsbundle")
     check((ios / "Podfile.properties.json").exists(), "Expo Podfile.properties.json present")
+    check("LaunchScreen.storyboard in Resources" not in pbx_text,
+          "storyboard not in Resources build phase")
+
+    # 4b. iOS-native replacements for the three degraded features.
+    pod_src = pod_dir / "MusicFreeNative"
+    lyric_native = pod_src / "LyricUtilModule.m"
+    check(lyric_native.exists(), "LyricUtil native module exists")
+    if lyric_native.exists():
+        lt = lyric_native.read_text(encoding="utf-8")
+        check("RCT_EXPORT_MODULE(LyricUtil)" in lt, "LyricUtil module name matches Android")
+        check("MFLyricWindow" in lt and "UIPanGestureRecognizer" in lt,
+              "draggable in-app lyric overlay implemented")
+
+    mp3_native = pod_src / "Mp3UtilModule.m"
+    if mp3_native.exists():
+        mt = mp3_native.read_text(encoding="utf-8")
+        check("USLT" in mt and "MFEmbeddedLyricForAsset" in mt,
+              "embedded ID3 lyric reading implemented")
+        check("MFWriteOverrideForPath" in mt and "MFApplyOverride" in mt,
+              "in-app metadata override (ID3 write replacement) implemented")
+
+    check((pod_src / "MusicFreeLiveActivityModule.m").exists(),
+          "optional Live Activity RN bridge present")
+
+    la_dir = ios / "LiveActivity"
+    for rel in ("MusicFreeLyricAttributes.swift",
+                "MusicFreeLiveActivityController.swift",
+                "MusicFreeLiveActivityWidget.swift",
+                "Info.plist", "README.md"):
+        check((la_dir / rel).exists(), f"LiveActivity source {rel}")
+
+    build_script = root / "scripts" / "build_unsigned_ipa.sh"
+    check(build_script.exists() and "-sdk iphoneos" in build_script.read_text(encoding="utf-8"),
+          "xcodebuild pins -sdk iphoneos")
 
     # 5. App entry point.
     check((upstream / "index.js").exists() or (upstream / "index.ts").exists(), "JS entry point exists")

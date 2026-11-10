@@ -61,10 +61,14 @@ rm -rf "${ARCHIVE}" "${STAGE}" "${OUT_IPA}"
 mkdir -p "${BUILD_DIR}" "${STAGE}"
 
 log "archiving Release for generic iOS device with code signing disabled"
+# -sdk iphoneos pins the platform explicitly. With only a generic destination,
+# Xcode 16.2's ibtool has been observed to look for an uninstalled simulator
+# platform on macOS runners ("iOS 18.2 Platform Not Installed").
 xcodebuild \
   -workspace "${IOS}/MusicFree.xcworkspace" \
   -scheme "${SCHEME}" \
   -configuration Release \
+  -sdk iphoneos \
   -destination 'generic/platform=iOS' \
   -archivePath "${ARCHIVE}" \
   CODE_SIGNING_ALLOWED=NO \
