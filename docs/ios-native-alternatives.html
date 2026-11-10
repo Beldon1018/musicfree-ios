@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MusicFree iOS 三项能力原生替代方案</title>
+<style>
+  :root{
+    --bg:#f5f7fa; --card:#ffffff; --ink:#1b2330; --muted:#5b6879;
+    --line:#e3e8ef; --blue:#2563eb; --blue-soft:#eef4ff;
+    --green:#0f766e; --green-soft:#e9f7f4; --amber:#a16207; --amber-soft:#fff7e6;
+    --red:#b42318; --red-soft:#fef3f2; --code:#f1f4f8;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    line-height:1.75;font-size:15px}
+  .wrap{max-width:1080px;margin:0 auto;padding:40px 24px 80px}
+  header{background:linear-gradient(135deg,#1e3a8a,#2563eb 60%,#3b82f6);color:#fff;
+    border-radius:18px;padding:38px 40px;margin-bottom:28px;box-shadow:0 10px 30px rgba(37,99,235,.18)}
+  header h1{margin:0 0 10px;font-size:30px;letter-spacing:.3px}
+  header p{margin:0;opacity:.92;font-size:15px}
+  .meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}
+  .meta span{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.25);
+    padding:5px 12px;border-radius:999px;font-size:12.5px}
+  h2{font-size:21px;margin:38px 0 16px;padding-left:12px;border-left:4px solid var(--blue)}
+  h3{font-size:16.5px;margin:24px 0 10px}
+  p{margin:10px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:22px 26px;margin:14px 0;box-shadow:0 1px 3px rgba(16,24,40,.04)}
+  .lead{font-size:16px;background:var(--blue-soft);border-color:#cfe0ff}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:18px 0}
+  .grid .card{margin:0}
+  .grid h3{margin:0 0 8px;font-size:15px}
+  .tag{display:inline-block;font-size:11.5px;font-weight:600;padding:3px 9px;
+    border-radius:6px;margin-bottom:10px;letter-spacing:.2px}
+  .t-done{background:var(--green-soft);color:var(--green)}
+  .t-part{background:var(--amber-soft);color:var(--amber)}
+  .t-hard{background:var(--red-soft);color:var(--red)}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14px;background:#fff}
+  th,td{border:1px solid var(--line);padding:10px 12px;text-align:left;vertical-align:top}
+  th{background:#f0f4f9;font-weight:600;color:#334155}
+  tr:nth-child(even) td{background:#fafbfd}
+  code{background:var(--code);padding:2px 6px;border-radius:5px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+  pre{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:16px 18px;
+    overflow-x:auto;font-size:12.8px;line-height:1.6;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  pre code{background:none;padding:0;color:inherit;font-size:inherit}
+  .flow{display:grid;grid-template-columns:1fr 32px 1fr 32px 1fr;gap:8px;
+    align-items:stretch;margin:18px 0}
+  .flow .node{background:#fff;border:1px solid var(--line);border-radius:12px;
+    padding:14px;text-align:center;font-size:13px}
+  .flow .node b{display:block;font-size:14px;margin-bottom:5px;color:var(--blue)}
+  .flow .arrow{display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:20px}
+  .note{border-left:4px solid var(--amber);background:var(--amber-soft);
+    padding:14px 18px;border-radius:0 10px 10px 0;margin:16px 0;font-size:14px}
+  .danger{border-left:4px solid var(--red);background:var(--red-soft);
+    padding:14px 18px;border-radius:0 10px 10px 0;margin:16px 0;font-size:14px}
+  .ok{border-left:4px solid var(--green);background:var(--green-soft);
+    padding:14px 18px;border-radius:0 10px 10px 0;margin:16px 0;font-size:14px}
+  ul,ol{padding-left:22px;margin:10px 0}
+  li{margin:6px 0}
+  .step{display:flex;gap:14px;margin:16px 0;align-items:flex-start}
+  .step .n{flex:0 0 30px;height:30px;border-radius:50%;background:var(--blue);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px}
+  .step .body{flex:1}
+  .step .body b{display:block;margin-bottom:3px}
+  .small{font-size:13px;color:var(--muted)}
+  footer{margin-top:46px;padding-top:20px;border-top:1px solid var(--line);
+    color:var(--muted);font-size:12.5px}
+  @media(max-width:760px){.grid,.flow{grid-template-columns:1fr}.flow .arrow{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>MusicFree iOS 三项能力的原生替代方案</h1>
+  <p>不照搬 Android，用 iOS 自己的形态实现：灵动岛 / 锁屏实时活动、App 内歌词浮层、AVFoundation 内嵌歌词、应用内元数据覆盖层</p>
+  <div class="meta">
+    <span>2026-11-10</span>
+    <span>上游 v1.0.0-beta.4</span>
+    <span>RN 0.76.5 / Expo 52</span>
+    <span>目标：未签名 IPA</span>
+    <span>静态校验 35/35</span>
+    <span>云端构建成功 · IPA 已产出</span>
+  </div>
+</header>
+
+<div class="card lead">
+  <p style="margin-top:0"><b>一句话结论：</b>这三项能力此前被归为「iOS 降级项」是不准确的。真正的限制只有一个 —— <b>iOS 不允许跨 App 的系统悬浮窗</b>；另外两项只是当时没实现。现在按 iOS 平台能力重新设计后，三项都有可用路径，其中两项已经写进适配工程并默认启用，灵动岛以「可选、自动降级」的方式提供完整源码。</p>
+</div>
+
+<div class="ok">
+  <p style="margin-top:0"><b>基础包已产出并通过校验（2026-11-10）：</b>云端 macOS runner 第三次构建 <code>42845832731</code> 成功，交付 <code>MusicFree-v1.0.0-beta.4-unsigned.ipa</code>（源码提交 <code>83fd6c4</code>）。</p>
+  <table style="margin-bottom:0">
+    <tr><th>大小 / SHA-256</th><td>7,231,214 字节 · <code>7621d1092d7f671c40a04cab50fcdb67a3926672925af62c73c039c4dc506da2</code></td></tr>
+    <tr><th>结构</th><td><code>Payload/MusicFree.app</code>，内嵌 <code>main.jsbundle</code>，arm64 thin Mach-O，84 个 zip 条目</td></tr>
+    <tr><th>签名</th><td>无 <code>_CodeSignature</code> / <code>embedded.mobileprovision</code> / <code>CodeResources</code> / <code>SC_Info</code> → <code>VERIFY OK</code></td></tr>
+    <tr><th>标识与能力</th><td><code>com.musicfree.ios.unsigned</code> · 1.0.0 (1) · iOS 15.1+ · <code>UIBackgroundModes=audio</code> · <code>NSSupportsLiveActivities=true</code></td></tr>
+    <tr><th>灵动岛现状</th><td>实时活动能力已在 Info.plist 声明，但包内<b>没有 .appex</b>；需接线 Widget Extension 后重新构建才会启动。前台可拖动浮层已随包生效。</td></tr>
+  </table>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <span class="tag t-done">已实现 · 默认启用</span>
+    <h3>内嵌歌词读取</h3>
+    <p class="small">AVFoundation 读 ID3v2 <code>USLT</code>/<code>SYLT</code> 与 iTunes <code>©lyr</code> 帧，等价 Android jaudiotagger 的 <code>FieldKey.LYRICS</code>。外置 <code>.lrc</code> 一直可用。</p>
+  </div>
+  <div class="card">
+    <span class="tag t-done">已实现 · 默认启用</span>
+    <h3>ID3 写入</h3>
+    <p class="small">不改写音频二进制。编辑结果存进 <code>Documents/</code> 覆盖层，读取时与文件标签合并。用户看到的「改标签」效果一致，沙盒原文件不受影响。</p>
+  </div>
+  <div class="card">
+    <span class="tag t-part">两层实现</span>
+    <h3>状态栏 / 悬浮歌词</h3>
+    <p class="small">前台用 App 内可拖动歌词浮层（已实现）；后台 / 锁屏用灵动岛 + 锁屏实时活动（源码齐备，需一次性接线）。</p>
+  </div>
+</div>
+
+<h2>一、为什么不能照搬 Android</h2>
+
+<table>
+  <tr><th>Android 做法</th><th>iOS 现实</th><th>结论</th></tr>
+  <tr><td><code>SYSTEM_ALERT_WINDOW</code> 跨 App 悬浮窗，覆盖状态栏</td><td>没有公开等价能力。App 只能在自己的 window 树里绘制，退到后台后更不可能覆盖别的 App</td><td>形态必须改变，不能「移植」</td></tr>
+  <tr><td>jaudiotagger 用 <code>AudioFileIO.read()</code> + <code>commit()</code> 写 ID3</td><td>AVFoundation 只读元数据、不提供 ID3 写回；自写 frame 写入器会改写用户的音频文件，在沙盒里既危险又容易损坏</td><td>换成应用内覆盖层</td></tr>
+  <tr><td>jaudiotagger 读 <code>FieldKey.LYRICS</code></td><td>AVFoundation 的 <code>asset.metadata</code> 能读 ID3v2 USLT/SYLT（此前误判为「无公开 API」，已纠正）</td><td>可以等价实现</td></tr>
+  <tr><td>锁屏 / 状态栏逐行歌词</td><td><code>MPNowPlayingInfoCenter</code> 无法放逐行歌词；Apple Music 的锁屏逐行歌词是私有能力。<b>Live Activity 是唯一的公开路径</b></td><td>用灵动岛 / 锁屏实时活动</td></tr>
+</table>
+
+<h2>二、总体架构</h2>
+
+<div class="flow">
+  <div class="node"><b>上游 JS</b><code>lyricManager.ts</code><br><code>plugin.ts getLyric()</code><br>完全不改</div>
+  <div class="arrow">→</div>
+  <div class="node"><b>Metro 平台覆盖</b><code>*.index.ios.ts</code><br>委托 Pod + 联动实时活动</div>
+  <div class="arrow">→</div>
+  <div class="node"><b>iOS 原生层</b>本地 CocoaPods Pod<br>浮层 / ID3 / 覆盖层<br>+ 可选 Swift 控制器</div>
+</div>
+
+<div class="flow">
+  <div class="node"><b>前台显示</b>可拖动歌词浮层<br>透明 UIWindow + 触摸穿透</div>
+  <div class="arrow">+</div>
+  <div class="node"><b>后台 / 锁屏显示</b>ActivityKit Live Activity<br>灵动岛 compact / expanded</div>
+  <div class="arrow">+</div>
+  <div class="node"><b>歌词来源</b>AVFoundation 内嵌帧<br>→ 同名 .lrc<br>→ 插件在线歌词</div>
+</div>
+
+<p class="small">关键设计：<b>上游源码零侵入</b>。所有实现放在 <code>overlay/</code> 新增文件里，靠 Metro 的 <code>index.ios.ts</code> 平台后缀和本地 CocoaPods Pod 生效；<code>prepare.sh</code> 每次从干净的上游 tag 重新检出并重放，因此上游发新版时这套替代方案不会被冲掉。</p>
+
+<h2>三、逐项方案</h2>
+
+<h3>3.1 状态栏歌词 → 前台浮层（已实现）</h3>
+
+<p><code>LyricUtilModule.m</code> 复用 Android 侧<b>完全相同</b>的 JS 接口（<code>showStatusBarLyric</code> / <code>setStatusBarLyricText</code> / <code>hideStatusBarLyric</code> / 各种样式 setter），把「系统悬浮窗」换成 App 自己的一个透明 <code>UIWindow</code>：</p>
+
+<ul>
+  <li>卡片可拖动（<code>UIPanGestureRecognizer</code>），位置/宽度/字号/对齐/颜色都从上游传来的 <code>config</code> 映射；同时兼容 <code>0..1</code> 与 <code>0..100</code> 两种百分比、<code>#RRGGBB</code> 与 Android <code>0xAARRGGBB</code> 整数颜色。</li>
+  <li>自定义 <code>-hitTest:withEvent:</code> 让卡片之外的触摸<b>穿透到下面的 App</b>，否则全屏 window 会让整个 MusicFree 点不动。</li>
+  <li><code>checkSystemAlertPermission</code> 改为返回 <code>YES</code>（App 内浮层不需要系统权限），这样上游设置里的「开启桌面歌词」开关才真正能打开。</li>
+  <li>所有 UI 操作强制主线程；window 用 <code>UIWindowScene</code> 初始化且<b>不</b>调用 <code>makeKeyAndVisible</code>，避免抢走 RN 的 keyWindow。</li>
+</ul>
+
+<div class="note"><b>边界：</b>浮层只在 App 前台可见，进入后台或锁屏后消失。这正是下面灵动岛那一层要补的场景，两者是互补而不是重复。</div>
+
+<h3>3.2 状态栏歌词 → 灵动岛 / 锁屏实时活动（源码齐备，可选接线）</h3>
+
+<p>用 <code>ActivityKit</code> + Widget Extension 显示当前歌词行。iOS 16.1 起所有机型在锁屏显示，iPhone 14 Pro 及以后机型额外显示在灵动岛。</p>
+
+<table>
+  <tr><th>组成</th><th>文件</th><th>归属 target</th></tr>
+  <tr><td>活动数据模型</td><td><code>MusicFreeLyricAttributes.swift</code></td><td>主 App + Extension</td></tr>
+  <tr><td>ActivityKit 控制器（启动 / 更新 / 结束 / 节流）</td><td><code>MusicFreeLiveActivityController.swift</code></td><td>主 App</td></tr>
+  <tr><td>SwiftUI 界面（锁屏 + 灵动岛 compact/expanded/minimal）</td><td><code>MusicFreeLiveActivityWidget.swift</code></td><td>Extension</td></tr>
+  <tr><td>Extension 配置</td><td><code>LiveActivity/Info.plist</code>（<code>NSExtensionPointIdentifier = com.apple.widgetkit-extension</code>）</td><td>Extension</td></tr>
+  <tr><td>RN 桥</td><td><code>MusicFreeLiveActivityModule.{h,m}</code></td><td>本地 Pod（默认已编译）</td></tr>
+</table>
+
+<p>更新链路：<code>lyricManager.ts</code> 的 <code>PlaybackProgressUpdated</code> → <code>LyricUtil.setStatusBarLyricText</code> → <code>index.ios.ts</code> 联动 <code>NativeModules.MusicFreeLiveActivity.updateLyric</code> → ObjC 桥 → Swift 控制器 → <code>Activity.update(using:)</code>。</p>
+
+<pre><code>// 关键取舍：本地更新，不用 APNs
+let state = MusicFreeLyricAttributes.ContentState(
+    lyric: lyric, previousLyric: nil, isPlaying: true)
+for activity in Activity&lt;MusicFreeLyricAttributes&gt;.activities {
+    Task { await activity.update(using: state) }
+}</code></pre>
+
+<ul>
+  <li><b>不用推送更新</b>：自签的未签名 IPA 拿不到可靠的 APNs 配置；<code>UIBackgroundModes = audio</code> 让进程在后台存活，歌词行可以持续本地更新。</li>
+  <li><b>1 秒节流 + 相同文本去重</b>：ActivityKit 有更新预算，逐行歌词（几秒一行）完全够用，也远低于 4 KB 状态上限。</li>
+  <li><b>自动降级</b>：ObjC 桥用 <code>NSClassFromString(@"MFLiveActivityController")</code> 运行时解析 Swift 类，并把 <code>-Swift.h</code> 依赖彻底去掉。没接 Widget Extension 时，每次调用都是静默 no-op，默认 IPA 构建完全不受影响。</li>
+</ul>
+
+<div class="danger"><b>自签场景的硬约束：</b>Widget Extension 是独立的 <code>.appex</code>，必须和 <code>.app</code> 一起签（先签 appex，再签 app，再重打 <code>Payload/</code>）。AltStore 支持；手动 <code>codesign</code> 或部分自签工具可能不支持。若不支持，就不要加这个 target —— 前台浮层仍可用，RN 桥会自动降级。另外用户在系统设置里关闭「实时活动」时，<code>ActivityAuthorizationInfo().areActivitiesEnabled</code> 为 false，控制器会安静地不启动。</div>
+
+<h3>3.3 内嵌歌词读取（已实现）</h3>
+
+<p>此前 <code>Mp3UtilModule.m</code> 只读 <code>asset.commonMetadata</code>，因此拿不到歌词。现在遍历 <code>asset.metadata</code>，按 keySpace 匹配 ID3 的 <code>USLT</code> / <code>SYLT</code>、iTunes 的 <code>©lyr</code>、Vorbis 的 <code>LYRICS</code>，并对 <code>NSData</code> 形式的 USLT payload 做 ID3v2 解码（编码字节 + 3 字节语言 + 描述符终止符 + 文本，支持 ISO-8859-1 / UTF-16 / UTF-8）。</p>
+
+<p>上游 <code>plugin.ts:1048</code> 的 <code>getLyric()</code> 逻辑保持不变：内嵌歌词为空 → 读同名 <code>.lrc</code> → 都没有才交给插件在线歌词。<code>getLyric</code> 外层有 <code>try/catch</code>，解析失败只会回退，不会崩。</p>
+
+<h3>3.4 ID3 写入 → 应用内元数据覆盖层（已实现）</h3>
+
+<p>Android 用 <code>tag.setField(...)</code> 直接改文件；iOS 侧改成把编辑结果持久化到 <code>Documents/musicfree_meta_overrides.json</code>，键为标准化后的文件路径：</p>
+
+<pre><code>getBasicMeta / getMediaMeta = AVFoundation 元数据  ⊕  覆盖层
+getLyric                   = 覆盖层 lyric  &gt;  内嵌 USLT  &gt;  ""（再由上游回退 .lrc）
+getMediaTag                = 合并结果 + 内嵌歌词
+setMediaTag                = 写入覆盖层（不碰音频文件）</code></pre>
+
+<p>这里有个容易被忽略的事实：<b>全仓检索 <code>setMediaTag</code> / <code>getMediaTag</code>，上游 TS/UI 层没有任何调用点</b>，只有接口声明和 Android 原生实现。也就是说「ID3 写入」在 Android 版里也还没接进界面。所以把能力做在 Pod 内部、让现有读取接口直接生效，比补一个没人调用的写入 API 更有意义；将来若要加「编辑歌曲标签」的 UI，直接调 <code>setMediaTag</code> 即可。</p>
+
+<h2>四、工程改动清单</h2>
+
+<table>
+  <tr><th>文件</th><th>动作</th><th>作用</th></tr>
+  <tr><td><code>overlay/ios/LocalPods/.../LyricUtilModule.{h,m}</code></td><td>新增</td><td>App 内可拖动歌词浮层，完整对齐 Android JS 接口</td></tr>
+  <tr><td><code>overlay/ios/LocalPods/.../Mp3UtilModule.m</code></td><td>重写</td><td>内嵌歌词读取 + 元数据覆盖层；保留原有元数据/封面实现</td></tr>
+  <tr><td><code>overlay/ios/LocalPods/.../MusicFreeLiveActivityModule.{h,m}</code></td><td>新增</td><td>RN 桥，运行时解析 Swift，未接 Extension 时静默 no-op</td></tr>
+  <tr><td><code>overlay/src/native/lyricUtil/index.ios.ts</code></td><td>重写</td><td>从 no-op 改为委托 Pod + 联动 Live Activity</td></tr>
+  <tr><td><code>overlay/src/native/mp3Util/index.ios.ts</code></td><td>注释</td><td>说明新的 iOS 行为</td></tr>
+  <tr><td><code>overlay/ios/LiveActivity/*.swift / Info.plist / README.md</code></td><td>新增</td><td>灵动岛完整源码与接线步骤（默认不入 target）</td></tr>
+  <tr><td><code>scripts/inject_ios.py</code></td><td>修改</td><td>注入 <code>NSSupportsLiveActivities</code>；移除 storyboard 编译，改用 plist 启动屏</td></tr>
+  <tr><td><code>scripts/build_unsigned_ipa.sh</code></td><td>修改</td><td>显式 <code>-sdk iphoneos</code></td></tr>
+  <tr><td><code>scripts/verify_adaptation.py</code></td><td>修改</td><td>静态校验从 19 项扩到 35 项</td></tr>
+  <tr><td><code>README.md / VERIFICATION.md</code></td><td>修改</td><td>方案说明与验证记录</td></tr>
+</table>
+
+<h2>五、顺带修掉的云端构建阻塞</h2>
+
+<p>第二次云端构建 <code>42838707999</code> 已经跑完 60+ 个 RN/Expo 依赖的编译，最后失败在：</p>
+
+<pre><code>LaunchScreen.storyboard: error: iOS 18.2 Platform Not Installed.
+Command SwiftCompile failed with a nonzero exit code
+** ARCHIVE FAILED **  (3 failures)</code></pre>
+
+<p>日志里只有一条真正的 <code>error:</code> —— <code>ibtool</code> 编译 RN 模板的启动屏 storyboard 时在 macOS runner 上找不到对应 platform，SwiftCompile 是级联取消。修法是确定性的：<code>inject_ios.py</code> 幂等移除 storyboard 在 Resources 阶段的引用，改用 iOS 14+ 的 <code>UILaunchScreen</code> plist 启动屏（完全没有 ibtool 步骤），同时 <code>xcodebuild</code> 显式指定 <code>-sdk iphoneos</code>。<code>plutil -lint project.pbxproj</code> 已确认改动后的工程文件语法有效。</p>
+
+<div class="ok"><b>第三次构建 <code>42845832731</code> 已成功：</b><code>prepare.sh</code> 35/35 → <code>npm ci</code> → <code>pod install</code> → <code>xcodebuild -sdk iphoneos ... CODE_SIGNING_ALLOWED=NO</code> 全链路通过。这同时证明 storyboard 修复生效，以及三个新增 Objective-C 模块（浮层 / ID3 / Live Activity 桥）都通过了 Clang 编译与链接，<code>main.jsbundle</code> 也已嵌入。</div>
+
+<h2>六、实施顺序</h2>
+
+<div class="step"><div class="n">1</div><div class="body"><b>基础包跑通（已完成 ✅）</b>云端构建已成功产出未签名 IPA，<code>main.jsbundle</code> 已嵌入、无任何签名标记。浮层、ID3 内嵌歌词读取、元数据覆盖层都已编译进包，等待真机验证。</div></div>
+<div class="step"><div class="n">2</div><div class="body"><b>验证前台体验</b>自签安装后播放本地音乐，在设置里打开「开启桌面歌词」，检查浮层可拖动、不挡点击、歌词随播放进度更新；导入一首带 USLT 内嵌歌词的 MP3，确认歌词能被读到。</div></div>
+<div class="step"><div class="n">3</div><div class="body"><b>按需开启灵动岛</b>按 <code>overlay/ios/LiveActivity/README.md</code> 用 Xcode GUI 添加 Widget Extension target（或用 XcodeGen 生成工程，避免手改 pbxproj），把三份 Swift 文件分别挂到对应 target，再单独跑一次云端构建验证。<b>建议这一步单独做</b>，不要和基础包验证混在一起，出问题容易定位。</div></div>
+<div class="step"><div class="n">4</div><div class="body"><b>（可选）补标签编辑 UI</b>上游没有调用 <code>setMediaTag</code> 的界面，如果想要「在 App 里改歌名/歌手/歌词」，需要在 UI 层新增入口；原生覆盖层已经就绪。</div></div>
+
+<h2>七、验证状态与边界</h2>
+
+<div class="ok"><b>已验证：</b><code>prepare.sh</code> 静态校验 <b>35 项 0 失败</b>；连续两次重放聚合哈希一致（幂等）；<code>project.pbxproj</code> / 两个 <code>Info.plist</code> 通过 <code>plutil -lint</code>；podspec <code>ruby -c</code>、Python <code>py_compile</code>、shell <code>bash -n</code>、3 个 <code>index.ios.ts</code> 的 TypeScript 语法全部通过；<b>云端完整 Release archive 成功</b>，三个 Objective-C 模块通过 Clang 编译链接；<code>verify_ipa.py</code> 确认产物未签名且含 JS bundle。</div>
+
+<div class="danger"><b>仍待验证：</b>灵动岛 Swift 源码默认未加入任何 Xcode target，因此<b>尚未过 Swift 编译器</b>，当前 IPA 内无 <code>.appex</code>，实时活动不会启动；浮层拖动与触摸穿透、ID3 <code>USLT</code>/<code>SYLT</code> 实际解码、元数据覆盖层读写、后台音频与锁屏联动都需要<b>真机</b>验证；Sideloadly / AltStore / ESign 重签安装未验证；自动同步的「发现新 tag → 重新构建 → 发 Release」全链路也还没真实触发过。这些都不算已完成交付。</div>
+
+<h2>八、能力对照总表</h2>
+
+<table>
+  <tr><th>能力</th><th>原 Android</th><th>本方案 iOS</th><th>状态</th></tr>
+  <tr><td>前台歌词悬浮</td><td>系统悬浮窗</td><td>App 内可拖动浮层</td><td>已实现</td></tr>
+  <tr><td>锁屏 / 后台歌词</td><td>状态栏常驻</td><td>Live Activity（锁屏 + 灵动岛）</td><td>源码齐备，需接线</td></tr>
+  <tr><td>内嵌歌词</td><td>jaudiotagger LYRICS</td><td>AVFoundation USLT/SYLT/©lyr</td><td>已实现</td></tr>
+  <tr><td>外置歌词</td><td>同名 .lrc</td><td>同名 .lrc（上游逻辑不变）</td><td>一直可用</td></tr>
+  <tr><td>编辑标签</td><td>改写 ID3 二进制</td><td>应用内元数据覆盖层</td><td>已实现（无 UI 入口）</td></tr>
+  <tr><td>标题 / 歌手 / 专辑 / 时长 / 封面</td><td>MediaMetadataRetriever</td><td>AVFoundation commonMetadata</td><td>已实现</td></tr>
+  <tr><td>插件 / 播放 / 下载 / WebDAV</td><td>JS 层</td><td>JS 层，不变</td><td>不受影响</td></tr>
+</table>
+
+<footer>
+  工程仓库：<code>https://github.com/Beldon1018/musicfree-ios</code> ｜ 上游 <code>maotoumao/MusicFree</code>（AGPL-3.0，本适配层同样受其约束）<br>
+  交付物：<code>MusicFree-v1.0.0-beta.4-unsigned.ipa</code>（未签名，需自签安装）、<code>musicfree-ios-adapter.zip</code>（适配工程源码，对应提交 <code>83fd6c4</code> 及之后的文档更新）、本文档。<br>
+  不是官方 iOS 版；上游 AGPL-3.0，分发 IPA 时请一并公开对应源码。
+</footer>
+
+</div>
+</body>
+</html>

@@ -6,6 +6,8 @@
 
 当前锁定上游版本：`v1.0.0-beta.4`（见 `UPSTREAM_REF`）。
 
+**当前状态（2026-11-10）**：云端 macOS runner 已成功产出未签名 IPA —— `MusicFree-v1.0.0-beta.4-unsigned.ipa`，7,231,214 字节，SHA-256 `7621d109…06da2`，iOS 15.1+，`Payload/MusicFree.app/main.jsbundle` 已内嵌，无任何签名标记。构建与产物校验记录见 `VERIFICATION.md`（run `42845832731` / 提交 `83fd6c4`）。
+
 ---
 
 ## 一、设计：上游零侵入，适配层可重放
@@ -70,7 +72,7 @@ Android 的三项能力在 iOS 上不做「照搬」，而是换成 iOS 自己�
 - 本地音乐的标题/艺术家/专辑/时长/封面由 AVFoundation 提供；插件协议、播放、下载、WebDAV 等 JS 层能力不受影响。
 - 灵动岛模块通过 `NSClassFromString` 运行时解析 Swift 控制器：**没接 Widget Extension 时自动静默降级**，默认构建完全不受影响。接线步骤见 `overlay/ios/LiveActivity/README.md`。
 
-详见 `outputs/MusicFree-iOS-原生替代方案.html`（完整方案、系统/自签限制与实施顺序）。
+详见 [`docs/ios-native-alternatives.html`](docs/ios-native-alternatives.html)（完整方案、系统/自签限制、产物校验与实施顺序）。
 
 ---
 
@@ -85,7 +87,7 @@ gh run list --repo <你的用户名>/musicfree-ios --workflow build-ios-unsigned
 gh run download --repo <你的用户名>/musicfree-ios -n unsigned-ipa
 ```
 
-公开仓库的 macOS runner 免费；私有仓库按 10 倍费率消耗 Actions 分钟数，一个 RN 工程约 20–40 分钟/次。`bootstrap_github.sh` 会建仓库、推送代码、触发第一次构建。
+公开仓库的 macOS runner 免费；私有仓库按 10 倍费率消耗 Actions 分钟数，一个 RN 工程约 20 分钟/次。`bootstrap_github.sh` 会建仓库、推送代码、触发第一次构建。这条路已在 `Beldon1018/musicfree-ios` 上跑通：第三次构建 `42845832731` 成功，产物通过 `verify_ipa.py` 校验。
 
 ### 路径 B：本地构建（需要完整 Xcode）
 
@@ -145,7 +147,7 @@ python3 scripts/sync_upstream.py --apply --ref v0.6.2        # 锁定某个 tag
 
 - **未签名**：产物需 Sideloadly / AltStore / ESign 自签；免费 Apple ID 通常 7 天一签。Bundle ID `com.musicfree.ios.unsigned`，最低系统由上游 `IPHONEOS_DEPLOYMENT_TARGET = 15.1` 决定。
 - **灵动岛是可选增强**：需要 iOS 16.1+（灵动岛形态还需 iPhone 14 Pro 及以后机型），且必须新增 Widget Extension target。`.appex` 要与 `.app` 一起签，AltStore 支持，手动 `codesign` 需先签 appex 再签 app；自签工具不支持时，直接不加该 target，App 内浮层仍可用，RN 桥会自动静默降级。
-- **编译验证的边界**：这套适配层在本地做了完整的静态校验（平台覆盖完整性、Pod 接线、plist 能力、pbxproj bundle 阶段、产物签名结构），但**构建用的 `xcodebuild` 必须在装有完整 Xcode 的 macOS 上跑**。当前工作机没有 Xcode，所以第一次云端构建是真正的验证点；若某个第三方 RN 依赖缺 iOS podspec，需要按日志补 Pod 或换实现。
+- **编译验证已完成**：本地做了 35 项静态校验，云端 `macos-15` + Xcode 16.2 已完成完整 Release archive 与链接（三个 Objective-C 模块均通过 Clang）。当前工作机没有 Xcode，因此**本地无法复现构建**，只能改代码后推到仓库触发 CI；若上游升级后某个第三方 RN 依赖缺 iOS podspec，仍需按日志补 Pod 或换实现。
 - **AGPL-3.0**：上游是强传染性许可，本适配层同样受其约束；仓库根目录已放 `LICENSE`（AGPL-3.0 全文，取自上游），分发 IPA 时请一并公开对应源码。
 - **不是官方产物**：请勿把它当作 MusicFree 官方 iOS 版对外发布；插件可用性取决于上游音源状态。
 
