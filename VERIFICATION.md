@@ -154,6 +154,49 @@
 | `plutil -lint` | `project.pbxproj` / `Info.plist` 均 OK；`UILaunchStoryboardName = SplashScreen` |
 | 脚本语法 | `py_compile`、`bash -n`、TypeScript `transpileModule` 全部通过 |
 
-### 云端构建
+### 云端构建（该次失败，见下一节的再次更正）
 
-run `42857755459`（提交 `f70b008`）用于验证清理后的 storyboard 能否通过该 runner 的 `ibtool` 并产出含 `SplashScreen.storyboardc` 的 IPA。结果见本节追加的产物校验记录。
+run `42857755459`（提交 `f70b008`）用于验证清理后的 storyboard 能否通过该 runner 的 `ibtool`。真实 API 结论 `conclusion=failure`：
+
+```text
+CompileStoryboard .../MusicFree/SplashScreen.storyboard
+/Applications/Xcode_16.2.app/Contents/Developer/usr/bin/ibtool ... --target-device iphone --minimum-deployment-target 15.1 ...
+SplashScreen.storyboard: error: iOS 18.2 Platform Not Installed.
+** ARCHIVE FAILED **
+```
+
+即**移除了 `<dependencies>` / `<device>` 的精简 storyboard 仍然失败**。「旧模板 XML 元数据触发 ibtool 查平台」这一推断被证伪；`-sdk iphoneos` 同样不是修复。
+
+---
+
+## 第二次更正：`ibtool` 失败是 GitHub runner 镜像缺陷（提交 `5228820`）
+
+### 证据链
+
+1. 失败日志中 `ibtool` 命令**没有 `--platform`**，而同一构建里的 `actool` 带 `--platform iphoneos`；`xcodebuild -showsdks` 确实列出 iOS 18.2 SDK，但 `ibtool` 仍报 `iOS 18.2 Platform Not Installed.`。
+2. 查到 GitHub 官方 runner 仓库 issue [`actions/runner-images#13560`](https://github.com/actions/runner-images/issues/13560)（2026-01）：`macos-15` 镜像 `20260112.0107.1` 起移除旧版 Xcode 的 iOS runtime，导致**任何** storyboard 都无法编译；Xcode 16.2 / 16.3 均受影响，极简 storyboard 也失败；同一份工程在 `macos-14` runner 和本地 Mac 的 Xcode 16.2 上都能编译。维护者给出的修复是：
+
+   ```yaml
+   - name: download platforms
+     run: |
+       xcrun simctl list
+       xcodebuild -downloadPlatform iOS
+   ```
+
+3. `j3k0/cordova-plugin-purchase#1684` 也把同一报错归因于 CI 基础设施（其绕法是改用 `iphonesimulator` 编译检查，但我们需要真机 device archive，不能这么做）。
+
+→ 结论：`ibtool` 报错与适配层 storyboard 内容**无关**，是 runner 缺 iOS platform/runtime。此前「删 storyboard → 出包成功」只是绕开了 ibtool，却破坏了 Expo 的原生启动契约；而「精简 XML」修不了 ibtool。
+
+### 修复（`5228820`）
+
+| 改动 | 内容 |
+| --- | --- |
+| `.github/workflows/build-ios-unsigned.yml` | `setup-xcode` 后新增 `Ensure iOS runtime is installed`：`xcodebuild -downloadPlatform iOS`（对所选 Xcode 的 iOS 18.2 runtime 做幂等安装；**不能用 `xcrun simctl list runtimes` 是否含 "iOS 18" 来判断**——runner 已装 18.5/18.6/26.x 属于别的 Xcode 版本，会让判断误以为已就绪而跳过，run `42861878571` 因此漏装） |
+| 同上 | `prepare.sh` 后新增 `Smoke-test ibtool`：用 `ibtool --compile` 单独编译生成的 `SplashScreen.storyboard`，**几秒内失败即快速失败**，不再白跑约 18 分钟 RN 全量 archive |
+| 保留 | `f70b008` 的 `SplashScreen.storyboard` 生成、plist / pbxproj 改名、iOS 启动分支门控、`verify_ipa.py` 强制检查 `SplashScreen.storyboardc` |
+
+`sync-upstream.yml` 通过 `uses:` 复用该 workflow，因此自动同步链路也会一并获得修复。
+
+### 待填
+
+run `42861878571`（提交 `5228820`）第一次失败：平台步骤的 "iOS 18" 判断误判（runner 已装 18.5/18.6/26.x 属于别的 Xcode），漏掉了 `downloadPlatform`，冒烟测试立刻复现 `iOS 18.2 Platform Not Installed.`。已将安装改为**无条件执行**（匹配所选 Xcode 的 18.2 runtime），重新提交并重建，结果见下一节产物校验记录。

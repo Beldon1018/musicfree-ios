@@ -71,7 +71,7 @@
   <div class="meta">
     <span>2026-11-10</span>
     <span>上游 v1.0.0-beta.4</span>
-    <span>修复提交 f70b008</span>
+    <span>修复提交 5228820</span>
     <span>静态校验 41/41</span>
     <span>适用：未签名 IPA 自签</span>
   </div>
@@ -109,11 +109,11 @@
   <b>置信度说明：</b>Expo 硬编码 <code>SplashScreen</code> storyboard 是<b>源码级事实</b>，旧包缺该资源是<b>包内事实</b>，两者构成完整的启动崩溃链，已修复。<code>hermes.framework</code> 未递归签名是自签场景下另一个高频原因，但只有真机崩溃日志才能确认是否同时存在。另外 <code>bootstrap.ts</code> 的权限异常会被外层 <code>try/catch</code> 接住，更可能表现为「初始化出错」界面而非进程闪退 —— 仍是必须修的真实 bug，但不当作闪退主因。
 </div>
 
-<h2>2. 源码侧修复过程（两次尝试，如实记录）</h2>
+<h2>2. 修复过程（三次尝试，如实记录）</h2>
 
 <p>第一次尝试 <code>a4f3d63</code> 只是把被删掉的 <code>LaunchScreen.storyboard</code> 恢复回来。云端 run <code>42853265361</code> <b>构建失败、没有出包</b>：日志里 <code>ibtool</code> 命令根本没有 <code>--platform</code> 参数（旁边的 <code>actool</code> 却有 <code>--platform iphoneos</code>），依旧报 <code>LaunchScreen.storyboard: error: iOS 18.2 Platform Not Installed.</code>。这证明早期「加 <code>-sdk iphoneos</code> 就够了」的推断是错的。追到 Expo 源码后又发现，即便编译成功，文件名 <code>LaunchScreen</code> 也不满足 Expo 要的 <code>SplashScreen</code>。</p>
 
-<p>最终修复 <code>f70b008</code> 把两件事一次解决：</p>
+<p>第二次尝试 <code>f70b008</code> 从 Expo 的硬编码名字出发重构启动屏：</p>
 
 <table>
   <tr><th style="width:32%">修复</th><th>内容与理由</th></tr>
@@ -245,7 +245,7 @@ cd .. &amp;&amp; zip -qry ../MusicFree-signed.ipa Payload</code></pre>
 <table>
   <tr><th style="width:38%">文件</th><th>建议</th></tr>
   <tr><td><code>MusicFree-v1.0.0-beta.4-unsigned.ipa</code><br><span class="small">SHA-256 <code>7621d109…</code>，旧包</span></td><td><span class="tag t-hard">弃用</span>缺 <code>SplashScreen.storyboardc</code>，Expo 原生启动必抛异常；新校验器已判失败。建议直接换修复版，不必在它上面反复试签名。</td></tr>
-  <tr><td><b>修复版未签名 IPA</b><br><span class="small">run <code>42857755459</code> 重建产物</span></td><td><span class="tag t-done">使用这个</span><code>SplashScreen.storyboardc</code> 已编进包、<code>UILaunchStoryboardName = SplashScreen</code>、iOS 启动分支已修正；签名时仍需递归签 <code>hermes.framework</code>。</td></tr>
+  <tr><td><b>修复版未签名 IPA</b><br><span class="small">run <code>42861878571</code> 重建产物</span></td><td><span class="tag t-done">使用这个</span>修复后产物：包含 <code>SplashScreen.storyboardc</code>、<code>UILaunchStoryboardName = SplashScreen</code>、iOS 启动分支已修正；<b>签名时仍必须递归签 <code>hermes.framework</code></b>。该包通过 <code>verify_ipa.py</code> 后才会交付。</td></tr>
   <tr><td><code>musicfree-ios-adapter.zip</code></td><td>适配工程源码，含注入脚本、41 项静态校验与全部修复，可用于自行复现构建。</td></tr>
 </table>
 

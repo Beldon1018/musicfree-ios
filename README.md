@@ -6,7 +6,7 @@
 
 当前锁定上游版本：`v1.0.0-beta.4`（见 `UPSTREAM_REF`）。
 
-**当前状态（2026-11-10）**：云端 macOS runner 已跑通完整 Release archive；首次出包 run `42845832731`。用户反馈「签名后打开闪退」后追到 Expo SDK 52 的原生启动契约，最终修复为提交 `f70b008`（生成 `SplashScreen.storyboard` + 修 ibtool + iOS 启动分支门控），重建与产物校验见 `VERIFICATION.md`。静态校验 **41 项 0 失败**。产物为 iOS 15.1+ 的 arm64 未签名 IPA，内嵌 `main.jsbundle`；**自签时必须递归签名 `Frameworks/hermes.framework`**，见 [`docs/signing-and-crash-guide.html`](docs/signing-and-crash-guide.html)。
+**当前状态（2026-11-10）**：云端 macOS runner 已跑通完整 Release archive；首次出包 run `42845832731`。用户反馈「签名后打开闪退」后追到 Expo SDK 52 的原生启动契约：它在原生阶段硬编码 `UIStoryboard(name: "SplashScreen")`，旧包没有该资源。`f70b008` 生成了 `SplashScreen.storyboard` 并修了 iOS 启动分支；此后又查明 `ibtool: iOS 18.2 Platform Not Installed.` 是 [GitHub `macos-15` runner 镜像缺陷](https://github.com/actions/runner-images/issues/13560)（与 storyboard 内容无关），`5228820` 在 CI 里补 `xcodebuild -downloadPlatform iOS` 并加了快速 `ibtool` 冒烟测试。静态校验 **41 项 0 失败**，修复版产物校验见 `VERIFICATION.md`。产物为 iOS 15.1+ 的 arm64 未签名 IPA，内嵌 `main.jsbundle`；**自签时必须递归签名 `Frameworks/hermes.framework`**，见 [`docs/signing-and-crash-guide.html`](docs/signing-and-crash-guide.html)。
 
 ---
 
@@ -51,7 +51,7 @@ MusicFree 官方源码 (git tag, 每次重新检出)
 | 3 个原生模块没有 iOS 实现 | `ios/LocalPods/MusicFreeNative`：Objective-C 实现的 `NativeUtils` / `Mp3Util` / `LyricUtil` + 可选 Live Activity 桥，用 CocoaPods 链接，**不改 `project.pbxproj` 的源文件列表** |
 | `Info.plist` 无后台音频、ATS 限制 | 幂等注入 `UIBackgroundModes=audio`、`NSAllowsArbitraryLoads`、`UIFileSharingEnabled`、`NSSupportsLiveActivities` 等 |
 | Expo SDK 52 原生启动硬编码 `UIStoryboard(name: "SplashScreen", bundle: nil)`，上游 RN 模板只有 `LaunchScreen.storyboard`，pod 也不自带 → 找不到就抛异常，真机打开即闪退 | 从上游 storyboard 生成一份最小 `SplashScreen.storyboard`，把 pbxproj 中 7 处文件名引用改为同名，并设 `UILaunchStoryboardName = SplashScreen`；系统启动屏与 Expo 共用一份 `SplashScreen.storyboardc` |
-| Xcode 16.2 在 CI 上编译旧 RN 模板 storyboard 报「iOS 18.2 Platform Not Installed」 | 生成 storyboard 时移除 `<dependencies>`（含 `<deployment identifier="iOS"/>`）与 `<device>`、刷新 `toolsVersion`，这段旧元数据才是 ibtool 去查不存在平台的根源。单独加 `-sdk iphoneos` **不足以**解决（run `42853265361` 已复现失败） |
+| `macos-15` runner 上 `ibtool` 编译任何 storyboard 都报「iOS 18.2 Platform Not Installed」 | **不是工程问题**：[`actions/runner-images#13560`](https://github.com/actions/runner-images/issues/13560) 证实该镜像移除了旧 Xcode 的 iOS runtime。CI 里先 `xcodebuild -downloadPlatform iOS`，再用 `ibtool --compile` 冒烟测试；`-sdk iphoneos`、精简 storyboard XML 都修不了（run `42853265361`、`42857755459` 已分别复现失败） |
 | 上游启动流程在 iOS 上误用 Android API | `bootstrap.ts` 的 Android 权限分支改为 `} else if (Platform.OS === "android") {`，不再调用 `PERMISSIONS.ANDROID.*`；`src/entry/index.tsx` 顶层的 `StatusBar.setBackgroundColor` / `setTranslucent` 同样按平台门控 |
 | Bundle ID 是 RN 模板值 | 改为 `com.musicfree.ios.unsigned`；版本号跟随上游 tag |
 | Expo 新架构开关不明确 | `ios/Podfile.properties.json` 明确 `newArchEnabled=false` + Hermes |
@@ -155,7 +155,7 @@ python3 scripts/sync_upstream.py --apply --ref v0.6.2        # 锁定某个 tag
 - **必须递归签名嵌套框架**：包内含 `Payload/MusicFree.app/Frameworks/hermes.framework`。自签工具若只签主程序，dyld 会在启动阶段校验失败并直接杀掉进程，表现就是「打开即闪退」。手机端签名工具需开启「签名 Frameworks / 动态库」；手动 `codesign` 要先签框架再签 `.app`。完整步骤见 [`docs/signing-and-crash-guide.html`](docs/signing-and-crash-guide.html)。
 - **`verify_ipa.py` 会拒收缺启动屏的包**：校验器现在检查 `SplashScreen.storyboardc` 是否存在（Expo 原生启动必需），并列出需要递归签名的框架清单。旧包 `7621d109…` 用新校验器会被判定失败。签完包后可再用 `verify_signed_ipa.sh` 确认框架签全了。
 - **灵动岛是可选增强**：需要 iOS 16.1+（灵动岛形态还需 iPhone 14 Pro 及以后机型），且必须新增 Widget Extension target。`.appex` 要与 `.app` 一起签，AltStore 支持，手动 `codesign` 需先签 appex 再签 app；自签工具不支持时，直接不加该 target，App 内浮层仍可用，RN 桥会自动静默降级。
-- **编译验证已完成**：本地做了 41 项静态校验（含 Expo storyboard 名字、ibtool 安全 XML、iOS 启动分支断言），云端 `macos-15` + Xcode 16.2 已完成完整 Release archive 与链接（三个 Objective-C 模块均通过 Clang）。当前工作机没有完整 Xcode，因此**本地无法跑模拟器/真机**，只能做静态校验 + 推到仓库触发 CI；「真机不再闪退」必须由使用者在设备上确认，若仍崩溃需按签名指南导出 `.ips` 崩溃日志。若上游升级后某个第三方 RN 依赖缺 iOS podspec，仍需按日志补 Pod 或换实现。
+- **编译验证状态**：本地做了 41 项静态校验（含 Expo storyboard 名字、精简 storyboard XML、iOS 启动分支断言）。云端 `macos-15` + Xcode 16.2 曾完成一次完整 Release archive 与链接（三个 Objective-C 模块均通过 Clang），但那次是没有 storyboard 的旧包；修复版 IPA 需要 `downloadPlatform` 后的重建来确认。当前工作机没有完整 Xcode，因此**本地无法跑模拟器/真机**，只能做静态校验 + 推到仓库触发 CI；「真机不再闪退」必须由使用者在设备上确认，若仍崩溃需按签名指南导出 `.ips` 崩溃日志。若上游升级后某个第三方 RN 依赖缺 iOS podspec，仍需按日志补 Pod 或换实现。
 - **AGPL-3.0**：上游是强传染性许可，本适配层同样受其约束；仓库根目录已放 `LICENSE`（AGPL-3.0 全文，取自上游），分发 IPA 时请一并公开对应源码。
 - **不是官方产物**：请勿把它当作 MusicFree 官方 iOS 版对外发布；插件可用性取决于上游音源状态。
 

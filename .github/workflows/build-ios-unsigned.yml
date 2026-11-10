@@ -43,24 +43,24 @@ jobs:
           xcode-version: '16.2'
 
       # actions/runner-images#13560: recent macos-15 images ship Xcode 16.x
-      # without the matching iOS runtime. ibtool then rejects EVERY storyboard
-      # with "iOS 18.2 Platform Not Installed." even for device archives,
-      # while actool/xcodebuild still work. xcodebuild -showsdks is misleading
-      # here (the SDK is listed), so check the runtime instead.
-      - name: Ensure iOS platform is installed
+      # without the matching iOS *simulator* runtime. ibtool then rejects EVERY
+      # storyboard with "iOS 18.2 Platform Not Installed." even for device
+      # archives, while actool/xcodebuild still work. The installed runtimes
+      # (18.5/18.6/26.x) belong to OTHER Xcode versions, so a generic
+      # "iOS 18" grep is NOT a reliable presence check — always (re)install the
+      # runtime for the SDK we actually selected, it is a no-op if present.
+      - name: Ensure iOS runtime for the selected Xcode is installed
         run: |
           set -euo pipefail
           xcodebuild -version
-          echo "== SDKs =="
-          xcodebuild -showsdks || true
-          echo "== iOS runtimes before =="
+          echo "== selected Xcode SDK =="
+          xcodebuild -showsdks | grep -i iphoneos || true
+          echo "== installed simulator runtimes =="
           xcrun simctl list runtimes || true
-          if ! xcrun simctl list runtimes 2>/dev/null | grep -qi 'iOS 18'; then
-            echo "iOS runtime missing; downloading platform (runner image regression)"
-            sudo xcodebuild -license accept || true
-            xcodebuild -downloadPlatform iOS
-          fi
-          echo "== iOS runtimes after =="
+          sudo xcodebuild -license accept || true
+          echo "Downloading the matching iOS runtime (runner image regression #13560)…"
+          xcodebuild -downloadPlatform iOS || true
+          echo "== runtimes after =="
           xcrun simctl list runtimes || true
 
       - uses: actions/setup-node@v4

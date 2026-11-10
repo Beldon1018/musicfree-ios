@@ -84,8 +84,8 @@
     <span>RN 0.76.5 / Expo 52</span>
     <span>目标：未签名 IPA</span>
     <span>静态校验 41/41</span>
-    <span>云端构建成功 · IPA 已产出</span>
-    <span>已修复启动闪退</span>
+    <span>修复版重建中（run 42861878571）</span>
+    <span>启动闪退根因已定位</span>
   </div>
 </header>
 
@@ -243,6 +243,8 @@ Command SwiftCompile failed with a nonzero exit code
 <div class="ok"><b>第三次构建 <code>42845832731</code> 已成功：</b><code>prepare.sh</code> 35/35 → <code>npm ci</code> → <code>pod install</code> → <code>xcodebuild -sdk iphoneos ... CODE_SIGNING_ALLOWED=NO</code> 全链路通过。三个新增 Objective-C 模块（浮层 / ID3 / Live Activity 桥）都通过了 Clang 编译与链接，<code>main.jsbundle</code> 也已嵌入。</div>
 
 <div class="danger"><b>后续更正（重要）：</b>上面关于「移除 storyboard 是确定性修法」的判断已被推翻，中间还走过一次弯路。用户自签后反馈「打开闪退」：追到 Expo SDK 52 源码，<code>SplashScreenManager.showSplashScreen()</code> 在原生启动阶段硬编码 <code>UIStoryboard(name: "SplashScreen", bundle: nil)</code>，找不到该 storyboard 会直接抛异常；上游 RN 模板只有 <code>LaunchScreen.storyboard</code>，Expo pod 也不自带。第一轮 <code>a4f3d63</code> 直接恢复 storyboard 编译，云端 <code>42853265361</code> 仍被 <code>ibtool: iOS 18.2 Platform Not Installed</code> 挡住（证明单独加 <code>-sdk iphoneos</code> 不够）。最终 <code>f70b008</code> 生成一份精简的 <code>SplashScreen.storyboard</code>（去掉旧模板的 <code>&lt;deployment identifier="iOS"/&gt;</code> 等元数据），让系统启动屏与 Expo 共用 <code>SplashScreen.storyboardc</code>，并修正 iOS 上误用 Android API 的两处启动调用。另外包内 <code>Frameworks/hermes.framework</code> 必须由自签工具<b>递归签名</b>，否则 dyld 会在启动阶段终止进程。完整诊断与操作步骤见 <a href="signing-and-crash-guide.html">《签名与闪退排查》</a>。</div>
+
+<div class="danger"><b>再更正（CI 侧）：</b><code>f70b008</code> 的重建 run <code>42857755459</code> 仍被 <code>ibtool: iOS 18.2 Platform Not Installed.</code> 挡住，连精简后的 storyboard 也编译不过 —— 说明问题<b>不在 storyboard 内容</b>。查到 <a href="https://github.com/actions/runner-images/issues/13560">actions/runner-images#13560</a>：2026 年 1 月起的 <code>macos-15</code> 镜像移除了旧版 Xcode 的 iOS runtime，导致任何 storyboard 都无法编译（Xcode 16.2/16.3 均受影响，本地 Mac 与 <code>macos-14</code> 正常）。提交 <code>5228820</code> 在 CI 里补上 <code>xcodebuild -downloadPlatform iOS</code>，并加了一个几秒级的 <code>ibtool --compile</code> 冒烟测试，避免再白跑 18 分钟 archive。精简 XML 与 <code>-sdk iphoneos</code> 都只是保留项，不是修复。</div>
 
 <h2>六、实施顺序</h2>
 
