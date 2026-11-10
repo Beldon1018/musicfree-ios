@@ -1,0 +1,5 @@
+{
+  "expo.jsEngine": "hermes",
+  "newArchEnabled": "false",
+  "EXPO_NO_TELEMETRY": "1"
+}

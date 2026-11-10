@@ -1,0 +1,87 @@
+name: Build unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: 'Upstream tag to build (leave empty to use UPSTREAM_REF)'
+        required: false
+        default: ''
+  workflow_call:
+    inputs:
+      upstream_ref:
+        description: 'Upstream tag to build'
+        required: false
+        type: string
+        default: ''
+    outputs:
+      upstream_ref:
+        description: 'The upstream tag that was built'
+        value: ${{ jobs.build.outputs.upstream_ref }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: musicfree-ios-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 120
+    outputs:
+      upstream_ref: ${{ steps.ref.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # React Native 0.76 / Expo 52 is verified against Xcode 16.x. If Apple
+      # ships a newer default toolchain, pin an older version here instead of
+      # letting the runner silently upgrade.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.2'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Resolve upstream ref
+        id: ref
+        env:
+          INPUT_REF: ${{ inputs.upstream_ref }}
+        run: |
+          if [ -n "$INPUT_REF" ]; then
+            printf '%s\n' "$INPUT_REF" > UPSTREAM_REF
+          fi
+          echo "ref=$(cat UPSTREAM_REF)" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare iOS-adapted checkout
+        run: bash scripts/prepare.sh
+
+      - name: Install JS dependencies
+        run: cd upstream && HUSKY=0 npm ci
+
+      - name: Install CocoaPods dependencies
+        run: cd upstream/ios && pod install
+
+      - name: Build unsigned IPA (Release archive, signing disabled)
+        run: bash scripts/build_unsigned_ipa.sh --skip-deps
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-ipa
+          path: build/*.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Summarize
+        if: success()
+        run: |
+          {
+            echo "### Unsigned iOS build"
+            echo "- upstream: \`${{ steps.ref.outputs.ref }}\`"
+            echo "- artifact: \`unsigned-ipa\`"
+            echo "- signing: disabled (CODE_SIGNING_ALLOWED=NO)"
+          } >> "$GITHUB_STEP_SUMMARY"

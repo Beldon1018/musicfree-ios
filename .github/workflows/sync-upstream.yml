@@ -1,0 +1,105 @@
+name: Sync upstream and rebuild iOS
+
+# Daily check: if MusicFree published a new tag, re-apply the adapter, build a
+# fresh unsigned IPA, publish it as a Release and bump UPSTREAM_REF. A failed
+# build never bumps the ref and opens an issue instead.
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: 'Force a specific upstream tag (leave empty for latest)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: musicfree-ios-sync
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.detect.outputs.changed }}
+      latest: ${{ steps.detect.outputs.latest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Detect new upstream release
+        id: detect
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_REF: ${{ inputs.upstream_ref }}
+        run: |
+          set -e
+          if [ -n "$INPUT_REF" ]; then
+            out=$(python3 scripts/sync_upstream.py --check --ref "$INPUT_REF")
+          else
+            out=$(python3 scripts/sync_upstream.py --check)
+          fi
+          echo "$out"
+          echo "changed=$(printf '%s' "$out" | python3 -c 'import sys,json; print(str(json.load(sys.stdin)["changed"]).lower())')" >> "$GITHUB_OUTPUT"
+          echo "latest=$(printf '%s' "$out" | python3 -c 'import sys,json; print(json.load(sys.stdin)["latest"])')" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check
+    if: needs.check.outputs.changed == 'true'
+    uses: ./.github/workflows/build-ios-unsigned.yml
+    with:
+      upstream_ref: ${{ needs.check.outputs.latest }}
+
+  publish:
+    needs: [check, build]
+    if: needs.check.outputs.changed == 'true' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      LATEST: ${{ needs.check.outputs.latest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: unsigned-ipa
+          path: dist
+      - name: Bump UPSTREAM_REF and publish Release
+        run: |
+          set -e
+          printf '%s\n' "$LATEST" > UPSTREAM_REF
+          ls -lh dist/
+          printf -- '- %s: published `ios-%s`\n' "$(date -u '+%Y-%m-%d %H:%M UTC')" "$LATEST" >> SYNC_HISTORY.md
+          git config user.name  "musicfree-ios-bot"
+          git config user.email "musicfree-ios-bot@users.noreply.github.com"
+          git add UPSTREAM_REF SYNC_HISTORY.md
+          git commit -m "chore: sync upstream to $LATEST and publish unsigned iOS build" || echo "nothing to commit"
+          git push
+
+          TAG="ios-$LATEST"
+          gh release view "$TAG" >/dev/null 2>&1 && gh release delete "$TAG" -y || true
+          gh release create "$TAG" dist/*.ipa \
+            --title "MusicFree iOS unsigned — $LATEST" \
+            --notes "Automatically built from upstream MusicFree \`$LATEST\` by the iOS adapter. Unsigned IPA: re-sign with Sideloadly / AltStore / ESign before installing. Not an official MusicFree release."
+
+  notify:
+    needs: [check, build]
+    if: always() && needs.check.result == 'success' && needs.build.result == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `iOS adapter failed for upstream ${{ needs.check.outputs.latest }}`,
+              body: `The daily sync found a new upstream tag but the iOS build failed. UPSTREAM_REF was NOT bumped.\n\nRun: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}\n\nCheck whether upstream changed Podfile / Info.plist / pbxproj, or whether a new Android-only NativeModule appeared (add a matching \`index.ios.ts\` override in \`overlay/src/native/\`).`,
+              labels: ['ios-adapter']
+            })
