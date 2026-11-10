@@ -42,6 +42,27 @@ jobs:
         with:
           xcode-version: '16.2'
 
+      # actions/runner-images#13560: recent macos-15 images ship Xcode 16.x
+      # without the matching iOS runtime. ibtool then rejects EVERY storyboard
+      # with "iOS 18.2 Platform Not Installed." even for device archives,
+      # while actool/xcodebuild still work. xcodebuild -showsdks is misleading
+      # here (the SDK is listed), so check the runtime instead.
+      - name: Ensure iOS platform is installed
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          echo "== SDKs =="
+          xcodebuild -showsdks || true
+          echo "== iOS runtimes before =="
+          xcrun simctl list runtimes || true
+          if ! xcrun simctl list runtimes 2>/dev/null | grep -qi 'iOS 18'; then
+            echo "iOS runtime missing; downloading platform (runner image regression)"
+            sudo xcodebuild -license accept || true
+            xcodebuild -downloadPlatform iOS
+          fi
+          echo "== iOS runtimes after =="
+          xcrun simctl list runtimes || true
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -58,6 +79,21 @@ jobs:
 
       - name: Prepare iOS-adapted checkout
         run: bash scripts/prepare.sh
+
+      # Fail fast (in seconds) if ibtool still cannot compile the launch
+      # storyboard, instead of burning ~18 minutes on the full RN archive.
+      - name: Smoke-test ibtool on the launch storyboard
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/ibtest"
+          IBTOOL="$(xcode-select -p)/usr/bin/ibtool"
+          "${IBTOOL}" --errors --warnings --notices \
+            --target-device iphone --minimum-deployment-target 15.1 \
+            --output-format human-readable-text \
+            --compile "${RUNNER_TEMP}/ibtest/SplashScreen.storyboardc" \
+            upstream/ios/MusicFree/SplashScreen.storyboard
+          test -d "${RUNNER_TEMP}/ibtest/SplashScreen.storyboardc"
+          echo "ibtool OK: SplashScreen.storyboard compiled"
 
       - name: Install JS dependencies
         run: cd upstream && HUSKY=0 npm ci
