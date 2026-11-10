@@ -76,17 +76,18 @@ def inject_info_plist(path: Path) -> list[str]:
         data["ITSAppUsesNonExemptEncryption"] = False
         changes.append("ITSAppUsesNonExemptEncryption = false")
 
-    # Keep the upstream LaunchScreen.storyboard. expo-splash-screen reads
-    # UILaunchStoryboardName during startup; an app with NO launch-screen
-    # resource at all can be killed before React Native mounts. The earlier
-    # ibtool "iOS 18.2 Platform Not Installed" failure came from xcodebuild
-    # resolving the simulator platform — build_unsigned_ipa.sh now pins
-    # -sdk iphoneos, which fixes ibtool without deleting the storyboard.
+    # Expo SDK 52's SplashScreenManager calls
+    #   UIStoryboard(name: "SplashScreen", bundle: nil).instantiateInitialViewController()
+    # from SplashScreenAppDelegateSubscriber.customizeRootView during native
+    # startup. UIStoryboard(name:) throws when that storyboard is missing, so an
+    # app that only ships "LaunchScreen" can be killed before React Native
+    # mounts. inject_storyboard() produces a single minimal storyboard named
+    # SplashScreen and points BOTH the system launch screen and Expo at it.
     if data.pop("UILaunchScreen", None) is not None:
         changes.append("stale UILaunchScreen plist override removed")
-    if data.get("UILaunchStoryboardName") != "LaunchScreen":
-        data["UILaunchStoryboardName"] = "LaunchScreen"
-        changes.append("UILaunchStoryboardName = LaunchScreen (restored)")
+    if data.get("UILaunchStoryboardName") != "SplashScreen":
+        data["UILaunchStoryboardName"] = "SplashScreen"
+        changes.append("UILaunchStoryboardName = SplashScreen (Expo-compatible)")
 
     # Capability keys for the optional Dynamic Island / Live Activity module.
     # They are inert until a Widget Extension target is added, so it is safe to
@@ -137,10 +138,13 @@ def inject_pbxproj(path: Path, ref: str) -> list[str]:
     if n:
         changes.append(f"CURRENT_PROJECT_VERSION -> {build_number} ({n} places)")
 
-    # Intentionally KEEP LaunchScreen.storyboard in the Resources build phase.
-    # -sdk iphoneos (see build_unsigned_ipa.sh) is the real ibtool fix; removing
-    # the storyboard left the IPA with no launch-screen resource, which breaks
-    # expo-splash-screen during startup on a real device.
+    # Rename the single storyboard resource to SplashScreen so that both
+    # UILaunchStoryboardName and Expo's hardcoded UIStoryboard(name:) resolve.
+    # Only the filename strings change — the pbxproj object structure stays
+    # intact, so this stays valid across upstream project-file edits.
+    text, n = re.subn(r"LaunchScreen\.storyboard", "SplashScreen.storyboard", text)
+    if n:
+        changes.append(f"LaunchScreen.storyboard -> SplashScreen.storyboard ({n} places)")
 
     if text != original:
         path.write_text(text, encoding="utf-8")
@@ -171,6 +175,48 @@ def inject_bootstrap(path: Path) -> list[str]:
             "bootstrap.ts: Android permission branch anchor not found — "
             "upstream changed, review manually before trusting this build")
     return changes
+
+
+def inject_storyboard(launch_path: Path, splash_path: Path) -> list[str]:
+    """Create the SplashScreen.storyboard that expo-splash-screen requires.
+
+    Two problems are solved at once:
+
+    1. Expo SDK 52 hardcodes `UIStoryboard(name: "SplashScreen", bundle: nil)`
+       in SplashScreenManager.showSplashScreen(), which runs from
+       SplashScreenAppDelegateSubscriber.customizeRootView during native app
+       startup. That initializer throws if the storyboard is absent. The
+       upstream RN template only ships LaunchScreen.storyboard, and the
+       ExpoSplashScreen pod contains no storyboard resource of its own.
+
+    2. The template's `<deployment identifier="iOS"/>` inside <dependencies>
+       makes ibtool on Xcode 16.2 look for a platform named "iOS 18.2" and
+       fail with "iOS 18.2 Platform Not Installed." when Xcode does not pass
+       --platform. Strip <dependencies> / <device> and refresh toolsVersion
+       so the storyboard compiles on a plain macOS runner.
+
+    The resulting file is named SplashScreen.storyboard; inject_pbxproj()
+    rewrites the project references to match, and Info.plist points
+    UILaunchStoryboardName at the same name.
+    """
+    if not launch_path.exists():
+        raise RuntimeError(
+            "LaunchScreen.storyboard missing — upstream changed its launch "
+            "screen setup, review manually before trusting this build")
+
+    text = launch_path.read_text(encoding="utf-8")
+    cleaned = re.sub(r"\s*<dependencies>.*?</dependencies>", "", text, flags=re.S)
+    cleaned = re.sub(r"\s*<device\s[^>]*/>", "", cleaned)
+    cleaned = re.sub(r'toolsVersion="\d+"', 'toolsVersion="22505"', cleaned, count=1)
+    if "<scenes>" not in cleaned or "initialViewController" not in cleaned:
+        raise RuntimeError(
+            "LaunchScreen.storyboard: scene/initialViewController missing — "
+            "upstream changed, review manually")
+
+    if splash_path.exists() and splash_path.read_text(encoding="utf-8") == cleaned:
+        return ["already present"]
+    splash_path.write_text(cleaned, encoding="utf-8")
+    return ["SplashScreen.storyboard generated (Expo-compatible, ibtool-safe)"]
 
 
 def inject_entry_index(path: Path) -> list[str]:
@@ -236,7 +282,9 @@ def main() -> int:
     pbxproj = ios / "MusicFree.xcodeproj" / "project.pbxproj"
     bootstrap = upstream / "src/entry/bootstrap/bootstrap.ts"
     entry_index = upstream / "src/entry/index.tsx"
-    for required in (podfile, info, pbxproj, bootstrap, entry_index):
+    launch_storyboard = ios / "MusicFree" / "LaunchScreen.storyboard"
+    splash_storyboard = ios / "MusicFree" / "SplashScreen.storyboard"
+    for required in (podfile, info, pbxproj, bootstrap, entry_index, launch_storyboard):
         if not required.exists():
             print(json.dumps({"error": f"missing upstream file: {required}"}, indent=2))
             return 1
@@ -245,6 +293,8 @@ def main() -> int:
         report["Podfile"] = inject_podfile(podfile)
         report["Info.plist"] = inject_info_plist(info)
         report["project.pbxproj"] = inject_pbxproj(pbxproj, args.ref)
+        report["SplashScreen.storyboard"] = inject_storyboard(
+            launch_storyboard, splash_storyboard)
         report["bootstrap.ts"] = inject_bootstrap(bootstrap)
         report["src/entry/index.tsx"] = inject_entry_index(entry_index)
     except Exception as exc:  # noqa: BLE001 - surface actionable message to CI

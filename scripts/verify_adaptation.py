@@ -79,8 +79,8 @@ def main() -> int:
         check((plist.get("NSAppTransportSecurity") or {}).get("NSAllowsArbitraryLoads") is True,
               "arbitrary loads allowed (plugin sources use http)")
         check(plist.get("UIFileSharingEnabled") is True, "document/file sharing enabled")
-        check(plist.get("UILaunchStoryboardName") == "LaunchScreen",
-              "upstream LaunchScreen storyboard restored (expo-splash-screen needs it)")
+        check(plist.get("UILaunchStoryboardName") == "SplashScreen",
+              "launch screen points at SplashScreen (Expo hardcodes that name)")
         check("UILaunchScreen" not in plist,
               "no stale plist-based launch-screen override")
         check(plist.get("NSSupportsLiveActivities") is True,
@@ -88,8 +88,14 @@ def main() -> int:
     else:
         check(False, "Info.plist exists")
 
-    check((ios / "MusicFree" / "LaunchScreen.storyboard").exists(),
-          "LaunchScreen.storyboard source present")
+    splash = ios / "MusicFree" / "SplashScreen.storyboard"
+    check(splash.exists(), "SplashScreen.storyboard source present")
+    if splash.exists():
+        st = splash.read_text(encoding="utf-8")
+        check("<dependencies>" not in st and "<device " not in st,
+              "storyboard has no <deployment identifier=iOS> (ibtool CI fix)")
+        check("initialViewController" in st and "<scenes>" in st,
+              "storyboard still has a launch scene")
 
     # 4. Xcode project settings + JS bundle phase.
     pbxproj = ios / "MusicFree.xcodeproj" / "project.pbxproj"
@@ -98,8 +104,10 @@ def main() -> int:
     check("export:embed" in pbx_text or "react-native-xcode.sh" in pbx_text,
           "Release archive will embed main.jsbundle")
     check((ios / "Podfile.properties.json").exists(), "Expo Podfile.properties.json present")
-    check("LaunchScreen.storyboard in Resources" in pbx_text,
-          "LaunchScreen.storyboard still compiled into Resources")
+    check("SplashScreen.storyboard in Resources" in pbx_text,
+          "SplashScreen.storyboard compiled into Resources")
+    check("LaunchScreen.storyboard" not in pbx_text,
+          "no stale LaunchScreen.storyboard references in project")
 
     # 4a. iOS startup path must not run Android-only APIs.
     bootstrap = src / "entry" / "bootstrap" / "bootstrap.ts"

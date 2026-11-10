@@ -37,8 +37,10 @@ def main() -> int:
         executable = info.get("CFBundleExecutable", "")
         exe_present = f"{app}/{executable}" in names
         launch_resources = [n for n in names
-                            if "LaunchScreen.storyboardc" in n
-                            or n.endswith("LaunchScreen.nib")]
+                            if ".storyboardc" in n or n.endswith(".nib")]
+        # Expo SDK 52 hardcodes UIStoryboard(name: "SplashScreen", bundle: nil)
+        # during native startup. Missing this resource throws before RN mounts.
+        splash_resources = [n for n in names if "SplashScreen.storyboardc" in n]
         nested_frameworks = sorted({
             n.split("/")[3] for n in names
             if "/Frameworks/" in n
@@ -59,6 +61,7 @@ def main() -> int:
         "js_bundle_included": bool(bundles),
         "executable_included": exe_present,
         "launch_screen_resources": len(launch_resources),
+        "expo_splash_screen_present": bool(splash_resources),
         "nested_frameworks_to_resign": nested_frameworks,
         "signature_files": signature_files,
         "unsigned": not signature_files,
@@ -74,7 +77,11 @@ def main() -> int:
         failed.append("Mach-O executable missing")
     if not launch_resources:
         failed.append("no compiled launch screen in bundle — "
-                      "expo-splash-screen can crash before React Native mounts")
+                      "system has nothing to show during cold start")
+    if not splash_resources:
+        failed.append("SplashScreen.storyboardc missing — Expo SDK 52 calls "
+                      "UIStoryboard(name: 'SplashScreen') at native startup "
+                      "and throws when it is absent (launch crash)")
     if failed:
         print("VERIFY FAILED: " + "; ".join(failed), file=sys.stderr)
         return 1
