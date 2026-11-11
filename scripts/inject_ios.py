@@ -316,19 +316,25 @@ def inject_keyboard_avoidance(panels: Path, dialogs: Path) -> dict[str, list[str
     window and the layout reflows by itself, which is why upstream never hit
     them):
 
-    1. panels/base/panelBase.tsx wraps the bottom sheet in a
-       KeyboardAvoidingView whose style is `{ zIndex: 15010 }` — no size at
-       all. The sheet body inside is `position: absolute; bottom: 0`, so the
-       wrapper has zero in-flow content and lays out with height 0. RN 0.76's
-       KeyboardAvoidingView then computes, for behavior="height":
-
-           _initialFrameHeight - keyboardHeight   // 0 - 336 -> clamped to 0
-
-       so the wrapper never moves and the bottom sheet stays underneath the
-       keyboard. Giving the wrapper a full-screen absolute box makes
-       `_initialFrameHeight` the screen height, so shrinking it lifts the
-       sheet above the keyboard. `pointerEvents="box-none"` keeps the tap
-       target of the mask behind it working.
+    1. panels/base/panelBase.tsx puts the sheet inside a KeyboardAvoidingView
+       whose style is only `{ zIndex: 15010 }`. The sheet body is
+       `position: absolute; bottom: 0`, so that wrapper has no in-flow content
+       and lays out 0px tall, which means:
+         * behavior="height"   -> _initialFrameHeight (0) - keyboardHeight is
+                                  clamped to 0: the sheet never moves, and the
+                                  "install plugin from URL" input stays under
+                                  the keyboard;
+         * behavior="position" -> the inner offset View is 0px tall and sits at
+                                  the top of the wrapper: fine only as long as
+                                  the wrapper itself happens to sit at the
+                                  bottom of the screen (SimpleSelect, the "+"
+                                  menu, relies on that).
+       Resizing the wrapper therefore fixes one case and breaks the other, so
+       this patch stops using KeyboardAvoidingView for sheets altogether: the
+       sheet body is anchored in an explicit full-screen box and the keyboard
+       height is applied as a translateY offset in the existing Reanimated
+       style. Both cases then share one code path, and panels with no input
+       are untouched (their keyboard height stays 0).
 
     2. dialogs/components/base/index.tsx centres the dialog card in a
        full-screen absolute container with no keyboard handling whatsoever, so
@@ -344,38 +350,132 @@ def inject_keyboard_avoidance(panels: Path, dialogs: Path) -> dict[str, list[str
     # --- 1. bottom sheets -------------------------------------------------
     text = panels.read_text(encoding="utf-8")
     changes: list[str] = []
-    old_style = "    kbContainer: {\n        zIndex: 15010,\n    },"
-    new_style = (
-        "    kbContainer: {\n"
-        "        position: \"absolute\",\n"
-        "        top: 0,\n"
-        "        left: 0,\n"
-        "        width: \"100%\",\n"
-        "        height: \"100%\",\n"
-        "        zIndex: 15010,\n"
-        "    },"
-    )
-    old_view = ("                <KeyboardAvoidingView\n"
-                "                    style={style.kbContainer}\n"
-                "                    behavior={keyboardAvoidBehavior || \"position\"}>")
-    new_view = ("                <KeyboardAvoidingView\n"
-                "                    pointerEvents=\"box-none\"\n"
-                "                    style={style.kbContainer}\n"
-                "                    behavior={keyboardAvoidBehavior || \"position\"}>")
-    if new_style in text and new_view in text:
+
+    replacements = [
+        (
+            "react-native import",
+            "import {\n"
+            "    BackHandler,\n"
+            "    DeviceEventEmitter,\n"
+            "    KeyboardAvoidingView,\n"
+            "    NativeEventSubscription,\n"
+            "    Pressable,\n"
+            "    StyleSheet,\n"
+            "} from \"react-native\";",
+            "import {\n"
+            "    BackHandler,\n"
+            "    DeviceEventEmitter,\n"
+            "    Dimensions,\n"
+            "    Keyboard,\n"
+            "    NativeEventSubscription,\n"
+            "    Platform,\n"
+            "    Pressable,\n"
+            "    StyleSheet,\n"
+            "    View,\n"
+            "} from \"react-native\";",
+        ),
+        (
+            "shared value",
+            "    const snapPoint = useSharedValue(0);",
+            "    const snapPoint = useSharedValue(0);\n"
+            "    // keyboard height, applied as a translateY offset (see below)\n"
+            "    const kbOffset = useSharedValue(0);",
+        ),
+        (
+            "keyboard subscription",
+            "            listenerSubscription.remove();\n"
+            "        };\n"
+            "    }, []);",
+            "            listenerSubscription.remove();\n"
+            "        };\n"
+            "    }, []);\n"
+            "\n"
+            "    // Lift the sheet above the soft keyboard. KeyboardAvoidingView\n"
+            "    // cannot do this here: the sheet body is absolutely positioned,\n"
+            "    // so the wrapper has no in-flow content.\n"
+            "    useEffect(() => {\n"
+            "        if (keyboardAvoidBehavior === \"none\" || Platform.OS !== \"ios\") {\n"
+            "            return;\n"
+            "        }\n"
+            "        // Measure the overlap with the window bottom instead of the raw\n"
+            "        // keyboard height: when the keyboard is dismissed iOS reports the\n"
+            "        // old height together with an off-screen screenY, so a\n"
+            "        // height-based calculation would leave the sheet lifted.\n"
+            "        const onChange = Keyboard.addListener(\n"
+            "            \"keyboardWillChangeFrame\",\n"
+            "            e => {\n"
+            "                const windowHeight = Dimensions.get(\"window\").height;\n"
+            "                const keyboardTop = e.endCoordinates?.screenY ?? windowHeight;\n"
+            "                kbOffset.value = withTiming(\n"
+            "                    Math.max(0, windowHeight - keyboardTop),\n"
+            "                    { duration: 250 },\n"
+            "                );\n"
+            "            },\n"
+            "        );\n"
+            "        const onHide = Keyboard.addListener(\"keyboardWillHide\", () => {\n"
+            "            kbOffset.value = withTiming(0, { duration: 250 });\n"
+            "        });\n"
+            "        return () => {\n"
+            "            onChange.remove();\n"
+            "            onHide.remove();\n"
+            "            kbOffset.value = 0;\n"
+            "        };\n"
+            "    }, []);",
+        ),
+        (
+            "animated transform",
+            "                    ? {\n"
+            "                        translateY: (1 - snapPoint.value) * useAnimatedBase,\n"
+            "                    }",
+            "                    ? {\n"
+            "                        translateY:\n"
+            "                            (1 - snapPoint.value) * useAnimatedBase -\n"
+            "                            kbOffset.value,\n"
+            "                    }",
+        ),
+        (
+            "wrapper element",
+            "                <KeyboardAvoidingView\n"
+            "                    style={style.kbContainer}\n"
+            "                    behavior={keyboardAvoidBehavior || \"position\"}>",
+            "                <View style={style.kbContainer} pointerEvents=\"box-none\">",
+        ),
+        (
+            "wrapper element close",
+            "                    {panelBody}\n"
+            "                </KeyboardAvoidingView>",
+            "                    {panelBody}\n"
+            "                </View>",
+        ),
+        (
+            "kbContainer style",
+            "    kbContainer: {\n"
+            "        zIndex: 15010,\n"
+            "    },",
+            "    kbContainer: {\n"
+            "        position: \"absolute\",\n"
+            "        top: 0,\n"
+            "        left: 0,\n"
+            "        width: \"100%\",\n"
+            "        height: \"100%\",\n"
+            "        zIndex: 15010,\n"
+            "    },",
+        ),
+    ]
+
+    if "kbOffset.value" in text and "keyboardWillChangeFrame" in text:
         report["panelBase.tsx"] = ["already present"]
     else:
-        if old_style not in text:
-            raise RuntimeError(
-                "panels/base/panelBase.tsx: kbContainer style anchor not found — "
-                "upstream changed the keyboard wrapper, review manually")
-        if old_view not in text:
-            raise RuntimeError(
-                "panels/base/panelBase.tsx: KeyboardAvoidingView anchor not found — "
-                "upstream changed the keyboard wrapper, review manually")
-        text = text.replace(old_style, new_style, 1).replace(old_view, new_view, 1)
+        for label, old, new in replacements:
+            if old not in text:
+                raise RuntimeError(
+                    f"panels/base/panelBase.tsx: {label} anchor not found — "
+                    "upstream changed the keyboard handling, review manually")
+            text = text.replace(old, new, 1)
         panels.write_text(text, encoding="utf-8")
-        changes.append("keyboard wrapper given a full-screen box (sheets lift off the keyboard)")
+        changes.append(
+            "sheets anchored in a full-screen box and lifted by the keyboard "
+            "height (no more KeyboardAvoidingView on absolutely positioned bodies)")
         report["panelBase.tsx"] = changes
 
     # --- 2. dialogs -------------------------------------------------------

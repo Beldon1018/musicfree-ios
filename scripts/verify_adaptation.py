@@ -136,11 +136,14 @@ def main() -> int:
     panel_base = src / "components" / "panels" / "base" / "panelBase.tsx"
     if panel_base.exists():
         pt = panel_base.read_text(encoding="utf-8")
-        check('height: "100%",\n        zIndex: 15010,' in pt,
-              "bottom-sheet keyboard wrapper has a real size "
-              "(zero-height wrapper made behavior=height a no-op)")
-        check('pointerEvents="box-none"' in pt,
-              "bottom-sheet keyboard wrapper does not swallow mask taps")
+        check("kbOffset.value" in pt and "keyboardWillChangeFrame" in pt,
+              "bottom sheet lifted by the keyboard height "
+              "(KeyboardAvoidingView cannot move an absolutely positioned sheet)")
+        check('<View style={style.kbContainer} pointerEvents="box-none">' in pt,
+              "sheet anchored in an explicit box-none container")
+        check("<KeyboardAvoidingView" not in pt,
+              "no KeyboardAvoidingView rendered by panelBase (behaviour=position "
+              "inverted panels such as the '+' menu once the wrapper had size)")
     else:
         check(False, "panels/base/panelBase.tsx exists")
 
