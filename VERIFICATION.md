@@ -366,3 +366,85 @@ MFLiveActivityController 类不存在
 - 入口：**设置 → 歌词 → 桌面歌词**（开启后才会 `showStatusBarLyric` → 启动 Live Activity；iOS 上它同时驱动应用内悬浮歌词卡片 + 灵动岛/锁屏）。
 - 自签必须**先签 `.appex`、再签 `.app`、然后重打包 `Payload/`**；`verify_signed_ipa.sh` 已包含 appex 校验。AltStore / Sideloadly 会自动处理。
 - 若签名工具改了 app 的 bundle id，务必同步把 extension 的 `com.musicfree.ios.unsigned.lyrics` 一起改（extension id 必须是 app id 的前缀），否则安装被拒。
+
+## 追加验证：插件安装失败（订阅源）(2026-11-11)
+
+用户反馈：**上个版本还能用的插件，现在安装失败**，并给出订阅源
+`https://fastly.jsdelivr.net/gh/Huibq/keep-alive/Music_Free/myPlugins.json`。
+
+### 先排除"版本回退"
+
+| 对比项 | 结果 |
+| --- | --- |
+| `UPSTREAM_REF` | 始终 `v1.0.0-beta.4`，自首次同步起未变（`git log -- UPSTREAM_REF` 只有 1 次提交） |
+| 两版 `Info.plist` | **逐键完全相同**（含 ATS / `NSSupportsLiveActivities`） |
+| 两版 `main.jsbundle` | 差异仅 1 处：bundle 内嵌的**构建产物路径字符串**（`Build/Products/...`），其后全部字节因长度位移而整体偏移；无逻辑差异 |
+| 包结构差异 | 仅新增 `PlugIns/MusicFreeLiveActivity.appex` |
+
+即：**JS 侧没有改动**，插件安装代码路径与上一版完全一致。
+
+### 真正的根因：2 秒超时
+
+`core/pluginManager/plugin.ts:36`
+
+```ts
+axios.defaults.timeout = 2000;
+```
+
+这个 2s 是**给插件运行期请求**（播放时调平台 API）做节流的，避免平台挂掉时卡死 UI。但
+`installPluginFromUrl` 复用了同一个 axios 实例去**下载插件包本身**：
+
+```ts
+await axios.get(url, { headers: { "Cache-Control": "no-cache", ... } })
+```
+
+实测（本机 → jsDelivr，多次采样）：
+
+| 指标 | 数值 |
+| --- | --- |
+| 冷 TLS 握手 | **1.10 / 1.20 / 0.96 s** |
+| 26 KB 插件（`xiaomi.js`）端到端 | **1.93 s**，速度约 13 KB/s |
+| 其余插件体积 | 15.4 – 26.1 KB |
+
+也就是说 2s **不是余量，而是实测值本身**。叠加 `Cache-Control: no-cache` 强制回源、
+订阅源里 5 个插件串行下载、移动网络抖动，必然出现
+`timeout of 2000ms exceeded` → UI 统一报"安装失败"。
+
+这也解释了"以前能用"：jsDelivr 边缘节点缓存命中时首字节极快，一旦回源就顶到上限。
+
+### 修复（注入式，锚点断言 + 幂等）
+
+| 文件 | 改动 |
+| --- | --- |
+| `core/pluginManager/index.ts` | `installPluginFromUrl` 的下载请求加 `timeout: 30000`；**运行期请求仍保持 2s** |
+| 同上 | 超时单独识别（`ECONNABORTED` 或 message 含 timeout）→ 提示"下载超时，请检查网络后重试" |
+| `pluginList.tsx` | 订阅清单（`.json`）拉取同样 `timeout: 30000` |
+| `pluginList.tsx` | `text.endsWith(".json")` → `inputUrl.endsWith(".json")`：后缀判断用的是未 trim 的原始输入，而请求用的是 trim 后的 URL，粘贴带换行的链接会被当成插件下载 → 解析失败 |
+
+### 插件代码本身没问题（本地实证）
+
+按 app 的加载方式（`Function(...)` 包裹 + `_require` 注入）在 Node 里跑了一遍订阅源全部 5 个插件：
+
+| 插件 | 结果 |
+| --- | --- |
+| `xiaoqiu.js` | OK，platform=小秋音乐，ver=0.3.0，11 个方法 |
+| `xiaowo.js` | OK，platform=小蜗音乐，ver=0.3.0，12 个方法 |
+| `xiaoyun.js` | OK，platform=小芸音乐，ver=0.3.0，13 个方法 |
+| `xiaogou.js` | OK，platform=小枸音乐，ver=0.3.0，8 个方法 |
+| `xiaomi.js` | OK，platform=小蜜音乐，ver=0.3.0，12 个方法 |
+
+依赖表（`packages`）中 `cheerio / crypto-js / axios / dayjs / big-integer / qs / he / webdav` 齐全。
+
+| # | 验证项 | 结果 |
+| --- | --- | --- |
+| 44 | `prepare.sh` | **60 项 0 失败**（新增 4 条 timeout / trim 断言） |
+| 45 | 二次注入幂等 | 两个文件均 `already present` |
+| 46 | `ts.transpileModule` | 0 语法错误 |
+| 47 | CI `43022942754` | **成功**（26m04s；工程解析 / Swift / archive 全链路通过） |
+| 48 | IPA | 6,962,617 B，SHA-256 `77356a49…`，`verify_ipa.py` VERIFY OK（appex + hermes 递归签名提示正常） |
+| 49 | 补丁是否进包 | 新 `main.jsbundle` **6,321,985 B** vs 上一版 **6,321,776 B**（+209 B）；`下载超时，请检查网络后重试` 以 **UTF-16LE** 存在于新包 **1** 次、旧包 **0** 次 |
+| 50 | dSYM | app `B85E8C23…`、appex `85A03AA3…`，与包内二进制 UUID 逐一吻合 |
+
+> 说明：Hermes 字节码会把标识符压缩、把数字放进常量池，所以用 `grep "timeout: 30000"`
+> 之类的 ASCII 探针在 bundle 上**不可靠**（新旧包都会命中/都不命中）。可靠做法是搜索
+> **UTF-16LE 编码的中文字符串字面量**，并比较两个 bundle 的体积差。
