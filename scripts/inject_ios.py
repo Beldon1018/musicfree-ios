@@ -25,25 +25,67 @@ def version_from_ref(ref: str) -> str:
     return f"{m.group(1)}.{m.group(2)}.{m.group(3)}" if m else "1.0.0"
 
 
-def inject_podfile(path: Path) -> str:
+def inject_podfile(path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8")
-    if "MusicFreeNative" in text:
-        return "already present"
+    original = text
+    changes: list[str] = []
 
-    needle = "target 'MusicFree' do"
-    if needle not in text:
-        raise RuntimeError(
-            "Podfile shape changed: cannot find \"target 'MusicFree' do\". "
-            "Manual review required (see README, 'When upstream changes')."
+    # Force the legacy (bridge) architecture.
+    #
+    # React Native 0.76 turns the New Architecture ON by default:
+    # react_native_pods.rb -> use_react_native!(:new_arch_enabled =>
+    # NewArchitectureHelper.new_arch_enabled), and that helper returns *true*
+    # whenever ENV['RCT_NEW_ARCH_ENABLED'] is unset:
+    #
+    #     def self.new_arch_enabled
+    #       return ENV["RCT_NEW_ARCH_ENABLED"] == nil ||
+    #              ENV["RCT_NEW_ARCH_ENABLED"] == "1"
+    #     end
+    #
+    # This bare-RN Podfile never reads Podfile.properties.json, so writing
+    # newArchEnabled=false there has NO effect. The default silently built the
+    # app in bridgeless mode, where BridgelessNativeModuleProxy::get() ->
+    # TurboModuleBinding::getModule() -> moduleProvider_() died on
+    # std::string(NULL) / strlen(NULL) during startup bundle evaluation on
+    # iOS 26.4 (SIGSEGV, JS thread). Setting the env var *before* the RN/Expo
+    # pod helpers run keeps the build on the classic bridge, which is the
+    # intended and far better-tested path for these native pods.
+    if "RCT_NEW_ARCH_ENABLED" not in text:
+        anchor = "platform :ios"
+        if anchor not in text:
+            raise RuntimeError(
+                "Podfile shape changed: cannot find \"platform :ios\" to force "
+                "the legacy architecture. Manual review required."
+            )
+        text = text.replace(
+            anchor,
+            "# >>> musicfree-ios-adapter: legacy architecture >>>\n"
+            "ENV['RCT_NEW_ARCH_ENABLED'] = '0'\n"
+            "# <<< musicfree-ios-adapter <<<\n\n" + anchor,
+            1,
         )
-    block = (
-        f"{needle}\n"
-        f"  # >>> {MARKER} >>>\n"
-        f"  pod 'MusicFreeNative', :path => './LocalPods/MusicFreeNative'\n"
-        f"  # <<< {MARKER} <<<"
-    )
-    path.write_text(text.replace(needle, block, 1), encoding="utf-8")
-    return "injected local pod"
+        changes.append("forced legacy architecture (RCT_NEW_ARCH_ENABLED=0)")
+
+    # Local pod with the iOS counterparts of the Android-only Kotlin modules.
+    if "MusicFreeNative" not in text:
+        needle = "target 'MusicFree' do"
+        if needle not in text:
+            raise RuntimeError(
+                "Podfile shape changed: cannot find \"target 'MusicFree' do\". "
+                "Manual review required (see README, 'When upstream changes')."
+            )
+        block = (
+            f"{needle}\n"
+            f"  # >>> {MARKER} >>>\n"
+            f"  pod 'MusicFreeNative', :path => './LocalPods/MusicFreeNative'\n"
+            f"  # <<< {MARKER} <<<"
+        )
+        text = text.replace(needle, block, 1)
+        changes.append("injected local pod")
+
+    if text != original:
+        path.write_text(text, encoding="utf-8")
+    return changes or ["already present"]
 
 
 def inject_info_plist(path: Path) -> list[str]:

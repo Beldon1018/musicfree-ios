@@ -60,6 +60,9 @@ def main() -> int:
     podfile = ios / "Podfile"
     podfile_text = podfile.read_text(encoding="utf-8") if podfile.exists() else ""
     check("MusicFreeNative" in podfile_text, "Podfile links MusicFreeNative")
+    check("ENV['RCT_NEW_ARCH_ENABLED'] = '0'" in podfile_text,
+          "Podfile forces legacy architecture (RN 0.76 defaults new arch ON; "
+          "bridgeless proxy crashed on strlen(NULL) at startup)")
     pod_dir = ios / "LocalPods" / "MusicFreeNative"
     for rel in ("MusicFreeNative.podspec", "MusicFreeNative/NativeUtilsModule.m", "MusicFreeNative/Mp3UtilModule.m"):
         check((pod_dir / rel).exists(), f"pod file {rel}")
