@@ -178,12 +178,46 @@ def main() -> int:
     check((pod_src / "MusicFreeLiveActivityModule.m").exists(),
           "optional Live Activity RN bridge present")
 
+    # 4d. Live Activity must be WIRED INTO THE PROJECT, not just present as
+    #     source. A Widget Extension target is the only place ActivityKit can
+    #     render Dynamic Island / Lock Screen lyrics; without it the RN module
+    #     silently no-ops (NSClassFromString returns nil), which is exactly the
+    #     state this check exists to prevent from shipping again.
     la_dir = ios / "LiveActivity"
     for rel in ("MusicFreeLyricAttributes.swift",
                 "MusicFreeLiveActivityController.swift",
                 "MusicFreeLiveActivityWidget.swift",
                 "Info.plist", "README.md"):
         check((la_dir / rel).exists(), f"LiveActivity source {rel}")
+
+    attrs = la_dir / "MusicFreeLyricAttributes.swift"
+    if attrs.exists():
+        check("@available(iOS 16.1, *)" in attrs.read_text(encoding="utf-8"),
+              "ActivityAttributes guarded for the iOS 15.1 app target")
+
+    ext_info = la_dir / "Info.plist"
+    if ext_info.exists():
+        with ext_info.open("rb") as fh:
+            ext_plist = plistlib.load(fh)
+        check((ext_plist.get("NSExtension") or {}).get("NSExtensionPointIdentifier")
+              == "com.apple.widgetkit-extension",
+              "extension Info.plist declares the widgetkit extension point")
+
+    check("name = MusicFreeLiveActivity;\n\t\t\tproductName = MusicFreeLiveActivity;"
+          in pbx_text,
+          "Widget Extension target exists in project.pbxproj")
+    check("Embed App Extensions" in pbx_text and "dstSubfolderSpec = 13" in pbx_text,
+          "app embeds the .appex into PlugIns")
+    check("com.apple.product-type.app-extension" in pbx_text,
+          "extension target uses the app-extension product type")
+    check("INFOPLIST_FILE = LiveActivity/Info.plist;" in pbx_text,
+          "extension builds against LiveActivity/Info.plist")
+    check("IPHONEOS_DEPLOYMENT_TARGET = 16.1;" in pbx_text,
+          "extension deploys to iOS 16.1 (ActivityKit minimum)")
+    for swift_ref in ("MusicFreeLiveActivityWidget.swift in Sources",
+                      "MusicFreeLiveActivityController.swift in Sources"):
+        check(pbx_text.count(swift_ref) >= 2,  # build file + build phase entry
+              f"target compiles {swift_ref.split(' in ')[0]}")
 
     build_script = root / "scripts" / "build_unsigned_ipa.sh"
     check(build_script.exists() and "-sdk iphoneos" in build_script.read_text(encoding="utf-8"),

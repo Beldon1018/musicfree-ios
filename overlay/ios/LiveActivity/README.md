@@ -1,19 +1,31 @@
 # Optional: Dynamic Island / Lock Screen lyrics (Live Activity)
 
 These files implement the iOS-native stand-in for Android's floating/status-bar
-lyrics. They are **shipped but not wired into any Xcode target by default**:
+lyrics. They are **wired into the Xcode project automatically** by
+`scripts/inject_live_activity.py`, which `prepare.sh` runs on every sync:
 
-- `MusicFreeNative/MusicFreeLiveActivityModule.{h,m}` IS compiled into the app
-  (it is part of the local pod). It resolves the Swift controller via
-  `NSClassFromString`, so with no extension present every call is a silent
-  no-op. The default unsigned-IPA build is therefore unaffected.
-- The three `.swift` files + `Info.plist` here are source material. Add them to
-  targets as described below to turn the feature on.
+- `MusicFreeLyricAttributes.swift` and `MusicFreeLiveActivityController.swift`
+  are compiled into the **main app** target (the controller registers
+  `@objc(MFLiveActivityController)`; `MusicFreeLiveActivityModule.m` resolves it
+  via `NSClassFromString`).
+- A **Widget Extension target `MusicFreeLiveActivity`** is created with these
+  sources, and the resulting `.appex` is embedded into `PlugIns` through an
+  "Embed App Extensions" copy phase.
+- `NSSupportsLiveActivities` / `NSSupportsLiveActivitiesFrequentUpdates` are
+  injected into the app `Info.plist` by `scripts/inject_ios.py`.
 
-## Wiring it up (once, in Xcode)
+Before this wiring existed the Swift files were present but compiled into no
+target at all, so `MFLiveActivityController` was always `nil` and every call
+silently no-opped — which is why the Dynamic Island showed nothing.
 
-Do this on a machine with full Xcode. Prefer the GUI / XcodeGen over hand-editing
-`project.pbxproj` — adding an app extension target touches ~10 project sections.
+Because `inject_ios.py`/`prepare.sh` re-checkout upstream on every sync, the
+project wiring lives in `scripts/inject_live_activity.py` (not in the
+regenerated `project.pbxproj`).
+
+## Manual wiring (reference only)
+
+You should not need this; it documents what the script does, for debugging a
+future upstream change.
 
 1. **File → New → Target → Widget Extension**
    - Product name: `MusicFreeLiveActivity`
@@ -31,18 +43,20 @@ Do this on a machine with full Xcode. Prefer the GUI / XcodeGen over hand-editin
    - `IPHONEOS_DEPLOYMENT_TARGET` = `16.1`
    - `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` identical to the main app
 5. **Main app Build Phases** — verify "Embed App Extensions" contains
-   `MusicFreeLiveActivity.appex` with "Copy only when installing" / destination
-   `PlugIns`. Xcode normally adds this automatically.
+   `MusicFreeLiveActivity.appex` with destination `PlugIns`.
 6. **App Info.plist** — `NSSupportsLiveActivities` and
    `NSSupportsLiveActivitiesFrequentUpdates` are already injected by
    `scripts/inject_ios.py`; do not remove them.
 7. Re-run `pod install`, then `bash scripts/build_unsigned_ipa.sh`.
 
-Because `inject_ios.py` and `prepare.sh` re-checkout upstream on every sync,
-keep these files in `overlay/ios/LiveActivity/` (they are copied back each run).
-The Xcode target wiring lives in `upstream/ios/MusicFree.xcodeproj`, which is
-regenerated from upstream — so either commit a small pbxproj injection step or
-re-apply step 1–5 after a major upstream change.
+### Compilation notes
+
+- `MusicFreeLyricAttributes.swift` carries `@available(iOS 16.1, *)` because it
+  is also compiled into the app target, whose deployment target is still 15.1.
+  Without the annotation the app target fails to compile (`ActivityAttributes`
+  does not exist before 16.1) — this is the one non-obvious requirement.
+- `IPHONEOS_DEPLOYMENT_TARGET` for the extension must be ≥ 16.1 (ActivityKit).
+
 
 ## Runtime behaviour & limits
 

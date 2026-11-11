@@ -47,6 +47,22 @@ def main() -> int:
             and len(n.split("/")) > 3
             and n.split("/")[3].endswith(".framework")
         })
+        # Widget extensions live in PlugIns/*.appex and are only rendered by
+        # the system when the ipa actually contains them — the Dynamic Island
+        # lyrics come from MusicFreeLiveActivity.appex, not from the app binary.
+        appex = sorted({
+            n.split("/")[3] for n in names
+            if n.startswith(f"{app}/PlugIns/")
+            and len(n.split("/")) > 3
+            and n.split("/")[3].endswith(".appex")
+        })
+        appex_plist = {}
+        for bundle in appex:
+            try:
+                with z.open(f"{app}/PlugIns/{bundle}/Info.plist") as fh:
+                    appex_plist[bundle] = plistlib.load(fh)
+            except KeyError:
+                appex_plist[bundle] = {}
 
     report = {
         "ipa": str(p),
@@ -63,6 +79,11 @@ def main() -> int:
         "launch_screen_resources": len(launch_resources),
         "expo_splash_screen_present": bool(splash_resources),
         "nested_frameworks_to_resign": nested_frameworks,
+        "app_extensions": appex,
+        "app_extension_point_ids": {
+            k: (v.get("NSExtension") or {}).get("NSExtensionPointIdentifier")
+            for k, v in appex_plist.items()
+        },
         "signature_files": signature_files,
         "unsigned": not signature_files,
     }
@@ -90,6 +111,14 @@ def main() -> int:
         print("RESIGN NOTE: these nested frameworks MUST be codesigned recursively "
               "by the sideload tool, otherwise dyld aborts at launch: "
               + ", ".join(nested_frameworks))
+    if appex:
+        print("RESIGN NOTE: the embedded Widget Extension MUST be signed too "
+              "(sign each .appex first, then the .app, then repack Payload/), "
+              "otherwise iOS rejects the install: " + ", ".join(appex))
+        print("LIVE ACTIVITY: present — enable 设置 → 歌词 → 桌面歌词 to start it")
+    else:
+        print("LIVE ACTIVITY: no PlugIns/*.appex in this ipa — Dynamic Island / "
+              "Lock Screen lyrics will not appear")
     return 0
 
 

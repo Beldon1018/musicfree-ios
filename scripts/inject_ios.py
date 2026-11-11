@@ -16,6 +16,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import inject_live_activity  # noqa: E402  (sibling script, same directory)
+
 MARKER = "musicfree-ios-adapter"
 BUNDLE_ID = "com.musicfree.ios.unsigned"
 
@@ -587,6 +590,10 @@ def main() -> int:
     try:
         report["Podfile"] = inject_podfile(podfile)
         report["Info.plist"] = inject_info_plist(info)
+        # The Widget Extension must be added BEFORE inject_pbxproj so the
+        # version-number rewrites in that step also reach the new target.
+        report["LiveActivity target"] = inject_live_activity.inject(pbxproj)
+        inject_live_activity.verify_definitions(pbxproj)
         report["project.pbxproj"] = inject_pbxproj(pbxproj, args.ref)
         report["SplashScreen.storyboard"] = inject_storyboard(
             launch_storyboard, splash_storyboard)
