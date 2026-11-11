@@ -309,6 +309,156 @@ def inject_entry_index(path: Path) -> list[str]:
     return changes
 
 
+def inject_keyboard_avoidance(panels: Path, dialogs: Path) -> dict[str, list[str]]:
+    """Keep text inputs visible when the iOS keyboard is up.
+
+    Two independent defects, both only visible on iOS (Android resizes the
+    window and the layout reflows by itself, which is why upstream never hit
+    them):
+
+    1. panels/base/panelBase.tsx wraps the bottom sheet in a
+       KeyboardAvoidingView whose style is `{ zIndex: 15010 }` — no size at
+       all. The sheet body inside is `position: absolute; bottom: 0`, so the
+       wrapper has zero in-flow content and lays out with height 0. RN 0.76's
+       KeyboardAvoidingView then computes, for behavior="height":
+
+           _initialFrameHeight - keyboardHeight   // 0 - 336 -> clamped to 0
+
+       so the wrapper never moves and the bottom sheet stays underneath the
+       keyboard. Giving the wrapper a full-screen absolute box makes
+       `_initialFrameHeight` the screen height, so shrinking it lifts the
+       sheet above the keyboard. `pointerEvents="box-none"` keeps the tap
+       target of the mask behind it working.
+
+    2. dialogs/components/base/index.tsx centres the dialog card in a
+       full-screen absolute container with no keyboard handling whatsoever, so
+       any dialog with a TextInput (SubscribePluginDialog, ...) ends up with
+       its inputs under the keyboard. The card is put inside a full-screen
+       KeyboardAvoidingView with behavior="padding": the bottom padding
+       shrinks the centring box, which moves the card up by half the keyboard
+       height — enough for a two-input dialog, and it keeps the card centred
+       when the keyboard is dismissed.
+    """
+    report: dict[str, list[str]] = {}
+
+    # --- 1. bottom sheets -------------------------------------------------
+    text = panels.read_text(encoding="utf-8")
+    changes: list[str] = []
+    old_style = "    kbContainer: {\n        zIndex: 15010,\n    },"
+    new_style = (
+        "    kbContainer: {\n"
+        "        position: \"absolute\",\n"
+        "        top: 0,\n"
+        "        left: 0,\n"
+        "        width: \"100%\",\n"
+        "        height: \"100%\",\n"
+        "        zIndex: 15010,\n"
+        "    },"
+    )
+    old_view = ("                <KeyboardAvoidingView\n"
+                "                    style={style.kbContainer}\n"
+                "                    behavior={keyboardAvoidBehavior || \"position\"}>")
+    new_view = ("                <KeyboardAvoidingView\n"
+                "                    pointerEvents=\"box-none\"\n"
+                "                    style={style.kbContainer}\n"
+                "                    behavior={keyboardAvoidBehavior || \"position\"}>")
+    if new_style in text and new_view in text:
+        report["panelBase.tsx"] = ["already present"]
+    else:
+        if old_style not in text:
+            raise RuntimeError(
+                "panels/base/panelBase.tsx: kbContainer style anchor not found — "
+                "upstream changed the keyboard wrapper, review manually")
+        if old_view not in text:
+            raise RuntimeError(
+                "panels/base/panelBase.tsx: KeyboardAvoidingView anchor not found — "
+                "upstream changed the keyboard wrapper, review manually")
+        text = text.replace(old_style, new_style, 1).replace(old_view, new_view, 1)
+        panels.write_text(text, encoding="utf-8")
+        changes.append("keyboard wrapper given a full-screen box (sheets lift off the keyboard)")
+        report["panelBase.tsx"] = changes
+
+    # --- 2. dialogs -------------------------------------------------------
+    text = dialogs.read_text(encoding="utf-8")
+    changes = []
+    old_import = "    BackHandler,\n    NativeEventSubscription,"
+    new_import = "    BackHandler,\n    KeyboardAvoidingView,\n    NativeEventSubscription,"
+    old_card = (
+        "            <Animated.View\n"
+        "                style={[\n"
+        "                    styles.dialogContainer,\n"
+        "                    dialogContainerStyle,\n"
+        "                    containerStyle,\n"
+        "                    scaleAnimationStyle,\n"
+        "                    {\n"
+        "                        backgroundColor: colors.backdrop,\n"
+        "                        shadowColor: colors.shadow,\n"
+        "                    },\n"
+        "                ]}>\n"
+        "                {children}\n"
+        "            </Animated.View>\n"
+        "        </View>"
+    )
+    new_card = (
+        "            <KeyboardAvoidingView\n"
+        "                behavior=\"padding\"\n"
+        "                pointerEvents=\"box-none\"\n"
+        "                style={styles.dialogLayer}>\n"
+        "                <Animated.View\n"
+        "                    style={[\n"
+        "                        styles.dialogContainer,\n"
+        "                        dialogContainerStyle,\n"
+        "                        containerStyle,\n"
+        "                        scaleAnimationStyle,\n"
+        "                        {\n"
+        "                            backgroundColor: colors.backdrop,\n"
+        "                            shadowColor: colors.shadow,\n"
+        "                        },\n"
+        "                    ]}>\n"
+        "                    {children}\n"
+        "                </Animated.View>\n"
+        "            </KeyboardAvoidingView>\n"
+        "        </View>"
+    )
+    old_container = '    dialogContainer: {\n        position: "absolute",\n        width: "80%",'
+    new_container = (
+        "    dialogLayer: {\n"
+        "        position: \"absolute\",\n"
+        "        top: 0,\n"
+        "        left: 0,\n"
+        "        width: \"100%\",\n"
+        "        height: \"100%\",\n"
+        "        alignItems: \"center\",\n"
+        "        justifyContent: \"center\",\n"
+        "        zIndex: 16310,\n"
+        "    },\n"
+        "    dialogContainer: {\n"
+        "        width: \"80%\","
+    )
+    if new_card in text and "dialogLayer:" in text and new_import in text:
+        report["dialogs/base/index.tsx"] = ["already present"]
+    else:
+        for label, needle in (
+            ("KeyboardAvoidingView import", old_import),
+            ("dialog card markup", old_card),
+            ("dialogContainer style", old_container),
+        ):
+            if needle not in text:
+                raise RuntimeError(
+                    f"dialogs/components/base/index.tsx: {label} anchor not found — "
+                    "upstream changed the dialog layout, review manually")
+        text = (
+            text.replace(old_import, new_import, 1)
+            .replace(old_card, new_card, 1)
+            .replace(old_container, new_container, 1)
+        )
+        dialogs.write_text(text, encoding="utf-8")
+        changes.append("dialog card moved into a keyboard-avoiding centring layer")
+        report["dialogs/base/index.tsx"] = changes
+
+    return report
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", required=True)
@@ -324,9 +474,12 @@ def main() -> int:
     pbxproj = ios / "MusicFree.xcodeproj" / "project.pbxproj"
     bootstrap = upstream / "src/entry/bootstrap/bootstrap.ts"
     entry_index = upstream / "src/entry/index.tsx"
+    panel_base = upstream / "src/components/panels/base/panelBase.tsx"
+    dialog_base = upstream / "src/components/dialogs/components/base/index.tsx"
     launch_storyboard = ios / "MusicFree" / "LaunchScreen.storyboard"
     splash_storyboard = ios / "MusicFree" / "SplashScreen.storyboard"
-    for required in (podfile, info, pbxproj, bootstrap, entry_index, launch_storyboard):
+    for required in (podfile, info, pbxproj, bootstrap, entry_index,
+                     panel_base, dialog_base, launch_storyboard):
         if not required.exists():
             print(json.dumps({"error": f"missing upstream file: {required}"}, indent=2))
             return 1
@@ -339,6 +492,7 @@ def main() -> int:
             launch_storyboard, splash_storyboard)
         report["bootstrap.ts"] = inject_bootstrap(bootstrap)
         report["src/entry/index.tsx"] = inject_entry_index(entry_index)
+        report.update(inject_keyboard_avoidance(panel_base, dialog_base))
     except Exception as exc:  # noqa: BLE001 - surface actionable message to CI
         print(json.dumps({"error": str(exc)}, indent=2))
         return 1

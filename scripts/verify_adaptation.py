@@ -130,6 +130,30 @@ def main() -> int:
     else:
         check(False, "src/entry/index.tsx exists")
 
+    # 4c. Soft keyboard must not cover dialog / bottom-sheet text inputs.
+    #     Android resizes the window so upstream never needed this; on iOS the
+    #     keyboard just overlays the app.
+    panel_base = src / "components" / "panels" / "base" / "panelBase.tsx"
+    if panel_base.exists():
+        pt = panel_base.read_text(encoding="utf-8")
+        check('height: "100%",\n        zIndex: 15010,' in pt,
+              "bottom-sheet keyboard wrapper has a real size "
+              "(zero-height wrapper made behavior=height a no-op)")
+        check('pointerEvents="box-none"' in pt,
+              "bottom-sheet keyboard wrapper does not swallow mask taps")
+    else:
+        check(False, "panels/base/panelBase.tsx exists")
+
+    dialog_base = src / "components" / "dialogs" / "components" / "base" / "index.tsx"
+    if dialog_base.exists():
+        dt = dialog_base.read_text(encoding="utf-8")
+        check("KeyboardAvoidingView" in dt and 'behavior="padding"' in dt,
+              "dialog card wrapped in KeyboardAvoidingView")
+        check("dialogLayer:" in dt and "justifyContent: \"center\"" in dt,
+              "dialog centring layer exists")
+    else:
+        check(False, "dialogs/components/base/index.tsx exists")
+
     # 4b. iOS-native replacements for the three degraded features.
     pod_src = pod_dir / "MusicFreeNative"
     lyric_native = pod_src / "LyricUtilModule.m"
