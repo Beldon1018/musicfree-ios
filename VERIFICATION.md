@@ -314,3 +314,55 @@ vtable typeinfo 解出 `facebook::react::BridgelessNativeModuleProxy` —— 该
 | 31 | 重建 `42994437080` | **成功**（20m18s），IPA 6,935,195 B / SHA-256 `7e476111…`，`verify_ipa.py` VERIFY OK |
 | 32 | 新方案是否进入线上 bundle | 新 `main.jsbundle` 含 `kbOffset` **2** 处；上一版（回归版）**0** 处 → 确认 panelBase 新实现已进包 |
 | 33 | dSYM UUID 与二进制一致 | `C13FF666-F650-3B26-808C-1E7855C6CCC3` |
+
+## 追加验证：灵动岛歌词（Live Activity）接线（2026-11-11）
+
+用户反馈：歌词本身已正常（有的歌没有属插件侧问题，非 bug），但**灵动岛不显示歌词**。
+
+根因不是代码逻辑，而是**接线缺失**：`overlay/ios/LiveActivity/` 下三个 Swift 文件既不在 pod 的 `source_files`，也不在任何 target 的 Sources phase —— 即"从未被编译"。于是：
+
+```
+MFLiveActivityController 类不存在
+→ NSClassFromString(@"MFLiveActivityController") == nil
+→ MusicFreeLiveActivityModule 的 start / updateLyric / stop 全部 early-return
+→ 灵动岛永远空白（且完全无日志、无报错）
+```
+
+而 ActivityKit 的硬性约束是：锁屏/灵动岛的 UI **只能由 Widget Extension（`ActivityConfiguration`）渲染**，主 app 进程只能 start/update/end。所以必须真的加一个 extension target。
+
+### 落地方式
+
+新增 `scripts/inject_live_activity.py`，由 `inject_ios.py` 在 `inject_pbxproj` **之前**调用（让版本号正则也覆盖新 target），用固定 UUID 幂等注入 `project.pbxproj`：
+
+| 注入对象 | 作用 |
+| --- | --- |
+| `PBXNativeTarget MusicFreeLiveActivity` | `com.apple.product-type.app-extension`、`IPHONEOS_DEPLOYMENT_TARGET=16.1`、`com.musicfree.ios.unsigned.lyrics` |
+| app target Sources 追加 | `MusicFreeLyricAttributes.swift`、`MusicFreeLiveActivityController.swift` |
+| extension Sources | `MusicFreeLiveActivityWidget.swift`、`MusicFreeLyricAttributes.swift` |
+| `PBXCopyFilesBuildPhase`（`dstSubfolderSpec=13`） | 把 `.appex` 拷进 `PlugIns` |
+| `PBXTargetDependency` / `PBXContainerItemProxy` | 保证先构建 extension |
+
+每个锚点都断言"全文唯一"，缺失即抛错（上游改版不会静默失配）；`verify_definitions()` 额外自检所有 24-hex 引用都有定义对象。
+
+### 一个会直接编译失败的坑
+
+`MusicFreeLyricAttributes` 继承 `ActivityAttributes`（iOS 16.1+），但同一个文件**也被编进 deployment target = 15.1 的 app target** → 必须加 `@available(iOS 16.1, *)`，否则 app target 直接报 "ActivityAttributes is only available in iOS 16.1 or newer"。
+
+| # | 验证项 | 结果 |
+| --- | --- | --- |
+| 34 | `prepare.sh` | **56 项 0 失败**（新增 10 条 target/embed/sources/deployment 断言） |
+| 35 | 二次注入幂等 | `LiveActivity target: already present` |
+| 36 | `plutil -lint project.pbxproj` | OK（仅语法；结构另由 UUID 自检覆盖） |
+| 37 | `py_compile` / `bash -n` | 全部通过 |
+| 38 | CI `43017023240` | **成功**（21m52s；工程解析 + Swift 编译 + archive 全链路通过） |
+| 39 | 包内含扩展 | `PlugIns/MusicFreeLiveActivity.appex`，`NSExtensionPointIdentifier = com.apple.widgetkit-extension` |
+| 40 | 扩展确实链了 ActivityKit | `otool -L`：`ActivityKit` / `WidgetKit` / `SwiftUI` 全部存在（extension 侧非 weak） |
+| 41 | 主 app 侧控制器已编入 | `strings MusicFree` 命中 `MFLiveActivityController`；`ActivityKit` 为 **weak** 链接（`@available` 生效，iOS 15.1 也能启动） |
+| 42 | Swift 运行时 | 未嵌入，走系统 `/usr/lib/swift/libswiftCore.dylib`（iOS 12.2+ 内置），包体仅 +25 KB |
+| 43 | dSYM | 两个：app `B85E8C23…`、extension `85A03AA3…`（与 appex 二进制一致） |
+
+### 使用与自签注意
+
+- 入口：**设置 → 歌词 → 桌面歌词**（开启后才会 `showStatusBarLyric` → 启动 Live Activity；iOS 上它同时驱动应用内悬浮歌词卡片 + 灵动岛/锁屏）。
+- 自签必须**先签 `.appex`、再签 `.app`、然后重打包 `Payload/`**；`verify_signed_ipa.sh` 已包含 appex 校验。AltStore / Sideloadly 会自动处理。
+- 若签名工具改了 app 的 bundle id，务必同步把 extension 的 `com.musicfree.ios.unsigned.lyrics` 一起改（extension id 必须是 app id 的前缀），否则安装被拒。
