@@ -291,3 +291,26 @@ vtable typeinfo 解出 `facebook::react::BridgelessNativeModuleProxy` —— 该
 | 24 | 重建 `42989752793`（约 18min） | **成功**，IPA 6,934,736 B / SHA-256 `690c5ef7…`，`verify_ipa.py` VERIFY OK |
 | 25 | 补丁是否真的进了线上 bundle（指纹校验） | 新包 `main.jsbundle` 含 `dialogLayer` **1** 处，上一版 **0** 处 → 确认编译进产物 |
 | 26 | dSYM UUID 与二进制一致 | `EEF75C89-227F-306D-BE14-664A4373CE14`（只改了 JS，Mach-O 未变，故 UUID 与上一版相同） |
+
+## 追加验证：软键盘修复的回归与最终方案（2026-11-11）
+
+第一次修复（`ab779f3`）把面板的 `KeyboardAvoidingView` 改成全屏尺寸，修好了 `behavior="height"`，却**弄坏了 `behavior="position"`**——那是所有未显式设置 `keyboardAvoidBehavior` 的面板（含 ＋ 号菜单 `SimpleSelect`）走的默认分支。该分支把 children 包进一个**普通流内 View**，由于面板 body 是 `position:absolute`，这个 View 高度为 0；原代码里它恰好落在屏幕底部（外层 KAV 本身是位于导航栈之后的 0 高流内元素），所以一直正常。外层容器一旦变成全屏，它就跑到**屏幕顶部**，于是菜单从上面弹出、点一下即消失。
+
+结论：该布局依赖「0 高容器恰好在屏幕底」的巧合，**不能靠改容器尺寸解决**，`KeyboardAvoidingView` 对这种绝对定位面板无解。
+
+最终方案（`6d30010`）：`panelBase` **彻底移除 KeyboardAvoidingView**。
+
+- 面板 body 放进显式全屏 `View`（`pointerEvents="box-none"`），给它一个确定的底部基准；
+- 键盘位移改为在既有 Reanimated transform 上叠加 `- kbOffset.value`；
+- `kbOffset = windowHeight - endCoordinates.screenY`，**不用** `endCoordinates.height`——iOS 收起键盘时会带旧 height 配屏外 `screenY`，用 height 会导致面板不回位；
+- 无输入的面板（＋ 菜单等）键盘高度恒为 0，布局与改动前完全一致；`editMusicSheetInfo` 这类默认 `position` 面板与原行为等价；`simpleInput` / `createMusicSheet` / `associateLrc` / `colorPicker` 是真正的修复。
+
+| # | 验证项 | 结果 |
+| --- | --- | --- |
+| 27 | 断言改为「含 `kbOffset`/`keyboardWillChangeFrame`」「含 `<View style={style.kbContainer} pointerEvents="box-none">`」「**不得再有** `<KeyboardAvoidingView`」 | **47 项 0 失败**（第三条即为防回退护栏） |
+| 28 | `prepare.sh` 重放 + 二次注入 | 通过，`panelBase.tsx` / `dialogs/base/index.tsx` 均 `already present` |
+| 29 | `ts.transpileModule` 校验 panelBase / dialogs base | 0 语法错误 |
+| 30 | 逐分支核对布局语义 | `position` 默认面板（＋ 菜单）回到屏幕底部；`height` 面板随键盘上移；`none` 面板不经过容器，行为不变 |
+| 31 | 重建 `42994437080` | **成功**（20m18s），IPA 6,935,195 B / SHA-256 `7e476111…`，`verify_ipa.py` VERIFY OK |
+| 32 | 新方案是否进入线上 bundle | 新 `main.jsbundle` 含 `kbOffset` **2** 处；上一版（回归版）**0** 处 → 确认 panelBase 新实现已进包 |
+| 33 | dSYM UUID 与二进制一致 | `C13FF666-F650-3B26-808C-1E7855C6CCC3` |
