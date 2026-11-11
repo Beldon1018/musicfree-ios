@@ -222,6 +222,115 @@ def inject_bootstrap(path: Path) -> list[str]:
     return changes
 
 
+PLUGIN_INSTALL_TIMEOUT = 30000
+
+
+def inject_plugin_install(manager: Path, plugin_list: Path) -> dict[str, list[str]]:
+    """Give plugin downloads their own timeout instead of the 2 s global one.
+
+    `core/pluginManager/plugin.ts` does
+
+        axios.defaults.timeout = 2000;
+
+    on the shared axios instance. That 2 s budget is deliberate for the API
+    calls a *plugin* makes at runtime (it keeps a dead platform from freezing
+    the UI), but `installPluginFromUrl` reuses the very same instance to fetch
+    the plugin bundle itself. A plugin is 16-26 KB served from jsDelivr, and a
+    cold TLS handshake to the edge alone costs ~1.1-1.2 s; measured end-to-end
+    downloads of 26 KB took 1.93 s, i.e. right on the edge of the limit. Any
+    jitter and the install dies with "timeout of 2000ms exceeded", which the UI
+    reports as a generic install failure.
+
+    The fix raises the timeout for the two *download* requests only — plugin
+    runtime calls keep their 2 s guard — and turns the timeout into a message
+    the user can act on. It also fixes `text.endsWith(".json")` in the install
+    helper, which tested the raw input while the request used the trimmed one,
+    so a subscription URL pasted with a trailing newline was fetched as a
+    plugin and failed to parse.
+    """
+    report: dict[str, list[str]] = {}
+
+    # --- 1. core/pluginManager/index.ts: timeout for the plugin download ----
+    text = manager.read_text(encoding="utf-8")
+    old_get = ("            const funcCode = (\n"
+               "                await axios.get(url, {\n"
+               "                    headers: {\n")
+    new_get = ("            const funcCode = (\n"
+               "                await axios.get(url, {\n"
+               "                    // Deliberately NOT the 2 s default from plugin.ts:\n"
+               "                    // that guards plugin runtime calls, while this is a\n"
+               "                    // 16-26 KB CDN download whose cold TLS handshake\n"
+               "                    // already costs ~1.2 s on mobile.\n"
+               "                    timeout: 30000,\n"
+               "                    headers: {\n")
+    old_fail = ("                return {\n"
+                "                    success: false,\n"
+                "                    message: e?.message ?? \"\",\n"
+                "                    pluginUrl: url,\n"
+                "                };")
+    new_fail = ("                const _timedOut =\n"
+                "                    e?.code === \"ECONNABORTED\" ||\n"
+                "                    /timeout/i.test(e?.message ?? \"\");\n"
+                "                return {\n"
+                "                    success: false,\n"
+                "                    message: _timedOut\n"
+                "                        ? \"下载超时，请检查网络后重试\"\n"
+                "                        : e?.message ?? \"\",\n"
+                "                    pluginUrl: url,\n"
+                "                };")
+    changes: list[str] = []
+    if "timeout: 30000," in text and "_timedOut" in text:
+        changes.append("already present")
+    else:
+        if text.count(old_get) != 1:
+            raise RuntimeError(
+                "core/pluginManager/index.ts: installPluginFromUrl download "
+                "anchor not unique/found — upstream changed, review manually")
+        if text.count(old_fail) != 1:
+            raise RuntimeError(
+                "core/pluginManager/index.ts: installPluginFromUrl failure "
+                "anchor not unique/found — upstream changed, review manually")
+        text = text.replace(old_get, new_get, 1).replace(old_fail, new_fail, 1)
+        manager.write_text(text, encoding="utf-8")
+        changes.append(
+            "plugin download uses a 30 s timeout instead of the 2 s runtime default")
+        changes.append("timeout is reported as an actionable message")
+    report["core/pluginManager/index.ts"] = changes
+
+    # --- 2. pluginList.tsx: subscription fetch + trimmed suffix test --------
+    text = plugin_list.read_text(encoding="utf-8")
+    old_json = ("                await axios.get(inputUrl, {\n"
+                "                    headers: {\n")
+    new_json = ("                await axios.get(inputUrl, {\n"
+                "                    timeout: 30000,\n"
+                "                    headers: {\n")
+    old_test = '        if (text.endsWith(".json")) {'
+    new_test = '        if (inputUrl.endsWith(".json")) {'
+    changes = []
+    if "timeout: 30000," in text and new_test in text:
+        changes.append("already present")
+    else:
+        if text.count(old_json) != 1:
+            raise RuntimeError(
+                "pluginList.tsx: subscription fetch anchor not unique/found — "
+                "upstream changed, review manually")
+        if text.count(old_test) != 1:
+            raise RuntimeError(
+                "pluginList.tsx: .json suffix test anchor not unique/found — "
+                "upstream changed, review manually")
+        text = (text.replace(old_json, new_json, 1)
+                    .replace(old_test, new_test, 1))
+        plugin_list.write_text(text, encoding="utf-8")
+        changes.append(
+            "subscription JSON fetch uses a 30 s timeout")
+        changes.append(
+            "'.json' is tested on the trimmed URL, so a pasted URL with a "
+            "trailing newline is no longer fetched as a plugin")
+    report["pluginList.tsx"] = changes
+
+    return report
+
+
 def inject_storyboard(launch_path: Path, splash_path: Path) -> list[str]:
     """Create the SplashScreen.storyboard that expo-splash-screen requires.
 
@@ -579,10 +688,14 @@ def main() -> int:
     entry_index = upstream / "src/entry/index.tsx"
     panel_base = upstream / "src/components/panels/base/panelBase.tsx"
     dialog_base = upstream / "src/components/dialogs/components/base/index.tsx"
+    plugin_manager = upstream / "src/core/pluginManager/index.ts"
+    plugin_list = upstream / ("src/pages/setting/settingTypes/pluginSetting"
+                              "/views/pluginList.tsx")
     launch_storyboard = ios / "MusicFree" / "LaunchScreen.storyboard"
     splash_storyboard = ios / "MusicFree" / "SplashScreen.storyboard"
     for required in (podfile, info, pbxproj, bootstrap, entry_index,
-                     panel_base, dialog_base, launch_storyboard):
+                     panel_base, dialog_base, launch_storyboard,
+                     plugin_manager, plugin_list):
         if not required.exists():
             print(json.dumps({"error": f"missing upstream file: {required}"}, indent=2))
             return 1
@@ -600,6 +713,7 @@ def main() -> int:
         report["bootstrap.ts"] = inject_bootstrap(bootstrap)
         report["src/entry/index.tsx"] = inject_entry_index(entry_index)
         report.update(inject_keyboard_avoidance(panel_base, dialog_base))
+        report.update(inject_plugin_install(plugin_manager, plugin_list))
     except Exception as exc:  # noqa: BLE001 - surface actionable message to CI
         print(json.dumps({"error": str(exc)}, indent=2))
         return 1

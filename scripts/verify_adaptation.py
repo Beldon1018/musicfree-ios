@@ -157,6 +157,34 @@ def main() -> int:
     else:
         check(False, "dialogs/components/base/index.tsx exists")
 
+    # 4d. Plugin installation must not inherit the 2 s runtime axios timeout.
+    #     plugin.ts sets axios.defaults.timeout = 2000 for the calls a plugin
+    #     makes while playing; the download of the 16-26 KB bundle reuses the
+    #     same instance and routinely needs ~1.9 s, so installs failed with
+    #     "timeout of 2000ms exceeded".
+    plugin_manager = src / "core" / "pluginManager" / "index.ts"
+    if plugin_manager.exists():
+        pm = plugin_manager.read_text(encoding="utf-8")
+        check("timeout: 30000," in pm,
+              "plugin download carries its own 30 s timeout "
+              "(the 2 s global default made installs fail on any slow network)")
+        check("_timedOut" in pm,
+              "download timeout is surfaced as an actionable message")
+    else:
+        check(False, "core/pluginManager/index.ts exists")
+
+    plugin_list = (src / "pages" / "setting" / "settingTypes" / "pluginSetting"
+                   / "views" / "pluginList.tsx")
+    if plugin_list.exists():
+        pl = plugin_list.read_text(encoding="utf-8")
+        check('inputUrl.endsWith(".json")' in pl,
+              "subscription detection uses the trimmed URL "
+              "(raw text made a URL with a trailing newline parse as a plugin)")
+        check("timeout: 30000," in pl,
+              "subscription manifest fetch carries its own 30 s timeout")
+    else:
+        check(False, "pluginList.tsx exists")
+
     # 4b. iOS-native replacements for the three degraded features.
     pod_src = pod_dir / "MusicFreeNative"
     lyric_native = pod_src / "LyricUtilModule.m"
