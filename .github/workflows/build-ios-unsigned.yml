@@ -112,6 +112,18 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      # Keep the dSYM so a device crash log can be symbolicated to the exact
+      # module/function. The app binary's LC_UUID changes every archive build,
+      # so the dSYM must come from the SAME run that produced the IPA the user
+      # installs — re-crash on the freshly built IPA, then send the new .ips.
+      - name: Upload dSYM
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-dsym
+          path: build/MusicFree.xcarchive/dSYMs
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Summarize
         if: success()
         run: |
