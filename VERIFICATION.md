@@ -244,3 +244,50 @@ run `42861878571`（提交 `5228820`）第一次失败：平台步骤的 "iOS 18
 - **可交付**：`outputs/MusicFree-v1.0.0-beta.4-unsigned.ipa`（SHA-256 前缀 `15d56628…`），iOS 15.1+ arm64 未签名包，内嵌 `main.jsbundle`，含 Expo 启动所需 `SplashScreen.storyboardc`。
 - **旧包 `7621d109…` 已废弃**：已移到 `outputs/cloud-build/archive-deprecated-7621d109.ipa`，请勿再使用。
 - **仍需真机确认**的边界不变：灵动岛 Swift 源码未接线、浮层/ID3 解码/后台音频行为、自签安装、自动同步全链路。用户自签后若仍闪退，按 `docs/signing-and-crash-guide.html` 导出 `.ips`，重点看 `code signature invalid` / `Library not loaded`（签名）还是 Expo splash 相关异常（启动屏）。
+
+## 追加验证：真机第二份崩溃（bridgeless）根因修复（2026-11-11）
+
+用户提供第二份 `.ips`（incident `4BA40D8B-6A2E-4922-9E98-19352F4A2AB0`，iPhone OS 26.4）。与第一份（`EXC_CRASH/SIGABRT`，Expo 找不到 `SplashScreen` storyboard）不同，这次是 `EXC_BAD_ACCESS/SIGSEGV`、`far=0`、faultingThread 为 `com.facebook.react.runtime.JavaScript`。
+
+用同 UUID 二进制反汇编 + vtable/typeinfo 还原，崩溃链为：
+
+```
+_platform_strlen                                     strlen(NULL)
+std::__1::basic_string::__init(char const*)          0x46f84
+TurboModuleBinding::getModule                        0x49137c  字面量 "TurboModuleBinding::moduleProvider"
+BridgelessNativeModuleProxy::get                     0x491a30  内联比较 "__esModule"
+hermes JsiProxy::get / JSObject::getNamedWithReceiver_RJS → evaluateJavaScript
+```
+
+vtable typeinfo 解出 `facebook::react::BridgelessNativeModuleProxy` —— 该类**只在 bridgeless（新架构）下安装**。根因：`overlay/ios/Podfile.properties.json` 的 `newArchEnabled:"false"` **从未被读取**（裸 RN 的 Podfile 不解析该文件），而 RN 0.76 的 `NewArchitectureHelper.new_arch_enabled` 在 `ENV['RCT_NEW_ARCH_ENABLED']` 未设置时返回 `true`，于是构建默认走了新架构。
+
+| # | 验证项 | 结果 |
+| --- | --- | --- |
+| 16 | `inject_ios.py` 在 `platform :ios` 前幂等注入 `ENV['RCT_NEW_ARCH_ENABLED'] = '0'` | 通过，`pod install` 日志出现 `forced legacy architecture` |
+| 17 | 重建 `42948604678`（20m37s） | **成功**，IPA 6,934,977 B / SHA-256 `2f556f94…` |
+| 18 | 产物是否真的回到旧架构 | 反汇编 `_RCTIsNewArchEnabled`（`0x10020e758`）= `adrp x8,0x100777000; ldrb w0,[x8,#0x968]; ret`，该全局落在 `__DATA` 的 BSS 尾（`vmsize 0xB4000` > `filesize 0x98000`）→ 初值 0 → 返回 **NO** |
+| 19 | 认知修正 | RN 0.76 的 `setup_fabric!` **无条件**安装 Fabric pods，二进制里仍有 `RCTFabricSurface` / `BridgelessNativeModuleProxy` 符号属正常，不能据此判断新架构生效；真正的开关是 `-DRCT_NEW_ARCH_ENABLED` 编译宏 |
+| 20 | workflow 增加 `Upload dSYM` | 通过；dSYM UUID 与二进制 `LC_UUID` 一致（`EEF75C89…`），可 `atos` 符号化 |
+
+## 追加验证：软键盘遮挡输入框修复（2026-11-11）
+
+用户报障：插件管理页弹出键盘后输入框被盖住。定位到两处 **iOS-only** 布局缺陷（Android 键盘会 resize window，upstream 从未踩到）：
+
+| 文件 | 缺陷 |
+| --- | --- |
+| `src/components/panels/base/panelBase.tsx` | 包裹底部面板的 `KeyboardAvoidingView` 样式只有 `{ zIndex: 15010 }`，内部 panelBody 是 `position:absolute; bottom:0`，所以该容器**没有任何在流内容 → 高度 0**。RN 0.76 的 `behavior="height"` 用 `_initialFrameHeight(0) - keyboardHeight` 并被裁到 0 → 面板不动，「从网络安装插件」输入框留在键盘下 |
+| `src/components/dialogs/components/base/index.tsx` | 弹窗卡片在全屏 absolute 容器里居中，**完全没有键盘避让** → 订阅插件弹窗（名称 / URL 两个输入框）被盖 |
+
+修法（commit `ab779f3`，仍为幂等注入，不手改 upstream）：
+
+- 给 `kbContainer` 补全屏 absolute 盒子（`_initialFrameHeight` 变成屏幕高，行为生效）+ `pointerEvents="box-none"`（保持遮罩可点关闭）。
+- 弹窗卡片移入 `styles.dialogLayer`（全屏 absolute 居中）+ `behavior="padding"` 的 `KeyboardAvoidingView`：`paddingBottom` 收缩居中盒，卡片整体上移半个键盘高，收起键盘后自动回中。
+
+| # | 验证项 | 结果 |
+| --- | --- | --- |
+| 21 | `verify_adaptation.py` 新增 4 条断言 | **46 项 0 失败** |
+| 22 | `prepare.sh` 重放幂等 | 通过，二次注入 `panelBase.tsx` / `dialogs/base/index.tsx` 均为 `already present` |
+| 23 | TypeScript 5.x `ts.transpileModule` 校验 4 个改过的 TS/TSX | 0 语法错误 |
+| 24 | 重建 `42989752793`（约 18min） | **成功**，IPA 6,934,736 B / SHA-256 `690c5ef7…`，`verify_ipa.py` VERIFY OK |
+| 25 | 补丁是否真的进了线上 bundle（指纹校验） | 新包 `main.jsbundle` 含 `dialogLayer` **1** 处，上一版 **0** 处 → 确认编译进产物 |
+| 26 | dSYM UUID 与二进制一致 | `EEF75C89-227F-306D-BE14-664A4373CE14`（只改了 JS，Mach-O 未变，故 UUID 与上一版相同） |
