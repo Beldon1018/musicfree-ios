@@ -20,7 +20,7 @@
  * transition and seek. The Swift controller throttles as a second line of
  * defence.
  */
-import { NativeModules } from "react-native";
+import { AppState, NativeModules } from "react-native";
 import RNTrackPlayer, {
     Event,
     State,
@@ -238,8 +238,14 @@ export function setupLiveActivityBridge(): void {
             }
         }
 
-        // --- plain 1 Hz progress tick (drives the progress bar) ---
-        if (now - lastHeartbeat >= 900) {
+        // --- progress tick (drives the progress bar) ---
+        // ActivityKit budgets background updates. Pushing 1 Hz forever while
+        // the app is backgrounded gets throttled and the card silently goes
+        // stale, which looks exactly like "lyrics stopped scrolling". Keep
+        // 1 Hz in the foreground, drop to one update every 4 s behind it —
+        // lyric-line changes still publish immediately either way.
+        const tickMs = AppState.currentState === "active" ? 900 : 4000;
+        if (now - lastHeartbeat >= tickMs) {
             lastHeartbeat = now;
             publish({ elapsed: position, duration });
         }
