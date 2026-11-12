@@ -36,8 +36,28 @@ def write_text_exact(path: Path, text: str) -> None:
 
 
 def version_from_ref(ref: str) -> str:
+    """Legacy helper, kept only as a fallback when ADAPTER_VERSION is absent."""
     m = re.search(r"v?(\d+)\.(\d+)\.(\d+)", ref)
     return f"{m.group(1)}.{m.group(2)}.{m.group(3)}" if m else "1.0.0"
+
+
+def read_version_files(root: Path, ref: str) -> tuple[str, str]:
+    """Return (adapter version, build number) — the shipped app's identity.
+
+    These deliberately do NOT come from the upstream tag: one upstream tag can
+    back many adapter releases. Files are the single source of truth; env vars
+    are only an override so prepare.sh / CI can pass the same values through.
+    """
+    def get(name: str, fallback: str) -> str:
+        env = os.environ.get(name, "").strip()
+        if env:
+            return env
+        path = root / name
+        if path.is_file():
+            return path.read_text(encoding="utf-8").strip() or fallback
+        return fallback
+
+    return get("ADAPTER_VERSION", version_from_ref(ref)), get("ADAPTER_BUILD", "1")
 
 
 def inject_podfile(path: Path) -> list[str]:
@@ -103,10 +123,21 @@ def inject_podfile(path: Path) -> list[str]:
     return changes or ["already present"]
 
 
-def inject_info_plist(path: Path) -> list[str]:
+def inject_info_plist(path: Path, ref: str, adapter_version: str) -> list[str]:
     with path.open("rb") as fh:
         data = plistlib.load(fh)
     changes: list[str] = []
+
+    # Provenance: with the version decoupled from UPSTREAM_REF, a user holding
+    # an IPA must still be able to tell which upstream tag and which adapter
+    # release produced it. verify_ipa.py reads these back out of the archive.
+    for key, value, label in (
+        ("MusicFreeAdapterVersion", adapter_version, "adapter version"),
+        ("MusicFreeUpstreamRef", ref, "upstream ref"),
+    ):
+        if data.get(key) != value:
+            data[key] = value
+            changes.append(f"{key} = {value} ({label})")
 
     backgrounds = list(data.get("UIBackgroundModes") or [])
     if "audio" not in backgrounds:
@@ -234,7 +265,8 @@ def inject_info_plist(path: Path) -> list[str]:
     return changes or ["already present"]
 
 
-def inject_pbxproj(path: Path, ref: str) -> list[str]:
+def inject_pbxproj(path: Path, ref: str, marketing: str,
+                   build_number: str) -> list[str]:
     text = path.read_text(encoding="utf-8")
     original = text
     changes: list[str] = []
@@ -247,7 +279,6 @@ def inject_pbxproj(path: Path, ref: str) -> list[str]:
     if n:
         changes.append(f"bundle id -> {BUNDLE_ID} ({n} places)")
 
-    marketing = version_from_ref(ref)
     text, n = re.subn(
         r'(MARKETING_VERSION\s*=\s*)[^;]+;',
         lambda m: f"{m.group(1)}{marketing};",
@@ -256,7 +287,6 @@ def inject_pbxproj(path: Path, ref: str) -> list[str]:
     if n:
         changes.append(f"MARKETING_VERSION -> {marketing} ({n} places)")
 
-    build_number = os.environ.get("BUILD_NUMBER", "1").strip() or "1"
     text, n = re.subn(
         r'(CURRENT_PROJECT_VERSION\s*=\s*)[^;]+;',
         lambda m: f"{m.group(1)}{build_number};",
@@ -302,6 +332,98 @@ def inject_bootstrap(path: Path) -> list[str]:
             "bootstrap.ts: Android permission branch anchor not found — "
             "upstream changed, review manually before trusting this build")
     return changes
+
+
+def inject_bootstrap_batch2(path: Path) -> list[str]:
+    """Batch 2: 4 Hz progress events + install the Live Activity bridge once.
+
+    Three content-aware, idempotent rewrites of the SAME upstream file:
+      1. import the bridge;
+      2. `progressUpdateEventInterval: 1` -> `0.25` (O2: a 1 s event means the
+         highlighted line can lag the audio by up to a second);
+      3. call `setupLiveActivityBridge()` right after `lyricManager.setup()`.
+
+    The bridge itself has a module-scoped `installed` flag, so even if the
+    bootstrap runs twice the RNTP listeners are only ever registered once.
+    """
+    text = read_text_exact(path)
+    original = text
+    changes: list[str] = []
+
+    import_anchor = 'import lyricManager from "@/core/lyricManager";'
+    import_line = ('import { setupLiveActivityBridge } '
+                   'from "@/native/liveActivity";')
+    if import_line not in text:
+        if import_anchor not in text:
+            raise RuntimeError(
+                "bootstrap.ts: lyricManager import anchor not found — "
+                "upstream changed, review manually")
+        text = text.replace(import_anchor,
+                            import_anchor + "\n" + import_line, 1)
+        changes.append("imports the Live Activity bridge")
+
+    old_interval = "progressUpdateEventInterval: 1,"
+    new_interval = "progressUpdateEventInterval: 0.25,"
+    if old_interval in text:
+        text = text.replace(old_interval, new_interval, 1)
+        changes.append("progressUpdateEventInterval 1 -> 0.25 (O2)")
+    elif new_interval not in text:
+        raise RuntimeError(
+            "bootstrap.ts: progressUpdateEventInterval anchor not found — "
+            "upstream changed the RNTP updateOptions shape")
+
+    setup_anchor = "    await lyricManager.setup();"
+    setup_patched = (
+        setup_anchor + "\n"
+        "    // >>> musicfree-ios-adapter: batch 2 >>>\n"
+        "    // Module-scoped guard: repeated bootstrap must not duplicate\n"
+        "    // RNTP listeners or stack Live Activities.\n"
+        "    setupLiveActivityBridge();\n"
+        "    // <<< musicfree-ios-adapter <<<"
+    )
+    if "setupLiveActivityBridge();" not in text:
+        if setup_anchor not in text:
+            raise RuntimeError(
+                "bootstrap.ts: lyricManager.setup() call anchor not found — "
+                "upstream changed, review manually")
+        text = text.replace(setup_anchor, setup_patched, 1)
+        changes.append("installs the Live Activity bridge once")
+
+    if text != original:
+        write_text_exact(path, text)
+    return changes or ["already present"]
+
+
+def inject_lyric_manager_guard(path: Path) -> list[str]:
+    """O0.2: make `lyricManager.setup()` idempotent.
+
+    Upstream registers `CurrentMusicChanged` and `PlaybackProgressUpdated`
+    listeners inside setup() with no guard. A player retry / hot reload calls
+    setup() again, doubling every lyric event — which batch 2 amplifies four
+    times because the progress interval drops from 1 s to 0.25 s.
+    """
+    text = read_text_exact(path)
+    if "listenersReady" in text:
+        return ["already present"]
+    anchor = "    setup() {\n        // 更新歌词\n"
+    if anchor not in text:
+        raise RuntimeError(
+            "lyricManager.ts: setup() anchor not found — upstream changed, "
+            "review the listener-registration guard manually")
+    patched = (
+        "    // >>> musicfree-ios-adapter: batch 2 (O0.2) >>>\n"
+        "    // setup() can run more than once (player retry / hot reload).\n"
+        "    private listenersReady = false;\n\n"
+        "    setup() {\n"
+        "        if (this.listenersReady) {\n"
+        "            return;\n"
+        "        }\n"
+        "        this.listenersReady = true;\n"
+        "        // <<< musicfree-ios-adapter <<<\n\n"
+        "        // 更新歌词\n"
+    )
+    write_text_exact(path, text.replace(anchor, patched, 1))
+    return ["setup() listener registration is now idempotent (O0.2)"]
 
 
 PLUGIN_INSTALL_TIMEOUT = 30000
@@ -844,14 +966,21 @@ def main() -> int:
     ap.add_argument("--ref", required=True)
     args = ap.parse_args()
 
-    upstream = Path(args.root) / "upstream"
+    root = Path(args.root)
+    upstream = root / "upstream"
     ios = upstream / "ios"
-    report: dict[str, object] = {"ref": args.ref}
+    adapter_version, adapter_build = read_version_files(root, args.ref)
+    report: dict[str, object] = {
+        "ref": args.ref,
+        "adapter_version": adapter_version,
+        "adapter_build": adapter_build,
+    }
 
     podfile = ios / "Podfile"
     info = ios / "MusicFree" / "Info.plist"
     pbxproj = ios / "MusicFree.xcodeproj" / "project.pbxproj"
     bootstrap = upstream / "src/entry/bootstrap/bootstrap.ts"
+    lyric_manager = upstream / "src/core/lyricManager.ts"
     entry_index = upstream / "src/entry/index.tsx"
     panel_base = upstream / "src/components/panels/base/panelBase.tsx"
     dialog_base = upstream / "src/components/dialogs/components/base/index.tsx"
@@ -864,25 +993,31 @@ def main() -> int:
                                  "/backupSetting.tsx")
     launch_storyboard = ios / "MusicFree" / "LaunchScreen.storyboard"
     splash_storyboard = ios / "MusicFree" / "SplashScreen.storyboard"
-    for required in (podfile, info, pbxproj, bootstrap, entry_index,
-                     panel_base, dialog_base, launch_storyboard,
+    for required in (podfile, info, pbxproj, bootstrap, lyric_manager,
+                     entry_index, panel_base, dialog_base, launch_storyboard,
                      plugin_manager, plugin_list, plugin_ts,
-                     check_update, backup_setting):
+                     check_update, backup_setting,
+                     upstream / "src/native/liveActivity/index.ios.ts"):
         if not required.exists():
             print(json.dumps({"error": f"missing upstream file: {required}"}, indent=2))
             return 1
 
     try:
         report["Podfile"] = inject_podfile(podfile)
-        report["Info.plist"] = inject_info_plist(info)
+        report["Info.plist"] = inject_info_plist(
+            info, args.ref, adapter_version)
         # The Widget Extension must be added BEFORE inject_pbxproj so the
         # version-number rewrites in that step also reach the new target.
         report["LiveActivity target"] = inject_live_activity.inject(pbxproj)
         inject_live_activity.verify_definitions(pbxproj)
-        report["project.pbxproj"] = inject_pbxproj(pbxproj, args.ref)
+        report["project.pbxproj"] = inject_pbxproj(
+            pbxproj, args.ref, adapter_version, adapter_build)
         report["SplashScreen.storyboard"] = inject_storyboard(
             launch_storyboard, splash_storyboard)
-        report["bootstrap.ts"] = inject_bootstrap(bootstrap)
+        report["bootstrap.ts"] = (inject_bootstrap(bootstrap)
+                                  + inject_bootstrap_batch2(bootstrap))
+        report["core/lyricManager.ts"] = inject_lyric_manager_guard(
+            lyric_manager)
         report["src/entry/index.tsx"] = inject_entry_index(entry_index)
         report.update(inject_keyboard_avoidance(panel_base, dialog_base))
         report.update(inject_plugin_install(plugin_manager, plugin_list))

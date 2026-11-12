@@ -77,6 +77,13 @@ jobs:
           fi
           echo "ref=$(cat UPSTREAM_REF)" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve adapter version
+        id: version
+        run: |
+          set -euo pipefail
+          echo "version=$(tr -d '[:space:]' < ADAPTER_VERSION)" >> "$GITHUB_OUTPUT"
+          echo "build=$(tr -d '[:space:]' < ADAPTER_BUILD)" >> "$GITHUB_OUTPUT"
+
       - name: Prepare iOS-adapted checkout
         run: bash scripts/prepare.sh
 
@@ -166,7 +173,8 @@ jobs:
         run: |
           {
             echo "### Unsigned iOS build"
+            echo "- adapter version: \`v${{ steps.version.outputs.version }}\` (build ${{ steps.version.outputs.build }})"
             echo "- upstream: \`${{ steps.ref.outputs.ref }}\`"
-            echo "- artifact: \`unsigned-ipa\`"
+            echo "- artifact: \`unsigned-ipa\` (MusicFree-v${{ steps.version.outputs.version }}-ios-unsigned.ipa)"
             echo "- signing: disabled (CODE_SIGNING_ALLOWED=NO)"
           } >> "$GITHUB_STEP_SUMMARY"

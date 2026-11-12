@@ -80,10 +80,11 @@
   <p>不照搬 Android，用 iOS 自己的形态实现：灵动岛 / 锁屏实时活动、App 内歌词浮层、AVFoundation 内嵌歌词、应用内元数据覆盖层</p>
   <div class="meta">
     <span>2026-11-12 更新</span>
+    <span>适配版本 v1.1.0 (build 2)</span>
     <span>上游 v1.0.0-beta.4</span>
     <span>RN 0.76.5 / Expo 52</span>
     <span>目标：未签名 IPA</span>
-    <span>静态校验 69/69</span>
+    <span>静态校验 113/113</span>
     <span>Widget Extension 已接线并进包</span>
     <span>启动闪退根因已修复</span>
   </div>
@@ -91,6 +92,7 @@
 
 <div class="card lead">
   <p style="margin-top:0"><b>一句话结论：</b>这三项能力此前被归为「iOS 降级项」是不准确的。真正的限制只有一个 —— <b>iOS 不允许跨 App 的系统悬浮窗</b>；另外两项只是当时没实现。现在按 iOS 平台能力重新设计后，<b>三项都已实现并编进产物</b>：内嵌歌词读取、应用内元数据覆盖层默认启用，灵动岛 / 锁屏实时活动的 Widget Extension 也已由 <code>scripts/inject_live_activity.py</code> 自动接线，当前 IPA 内含 <code>PlugIns/MusicFreeLiveActivity.appex</code>。<b>它不再是可选增强，自签时必须一起签</b>（见 <a href="signing-and-crash-guide.html">《签名与闪退排查》</a>）。</p>
+  <p style="margin-bottom:0"><b>第二批（适配版本 v1.1.0 / build 2）：</b>把灵动岛从「能显示」做到「显示对」 —— 锁屏 / 灵动岛现在显示真实歌名与歌手、暂停态、上一句 / 当前句 / 翻译 / 下一句与播放进度条；实时活动生命周期改为幂等（已有活动只更新、不重复创建，关闭桌面歌词主动收起），RNTP 4Hz 进度事件经约 1Hz 心跳与 Swift 250ms 节流后才写入 ActivityKit。同时把 App 版本、build number、IPA 文件名与 Release tag 从上游 tag 解耦为独立的 <code>ADAPTER_VERSION</code> / <code>ADAPTER_BUILD</code>，产物改名为 <code>MusicFree-v1.1.0-ios-unsigned.ipa</code>。<b>这些运行时行为仍需真机确认</b>，完整 Xcode 编译结论以 CI 为准。</p>
 </div>
 
 <div class="ok">
@@ -184,18 +186,30 @@
   <tr><td>产物护栏</td><td><code>verify_ipa.py</code>（缺 <code>.appex</code> 或 extension point 错误 → 硬失败）+ <code>selftest_verify_ipa.py</code>（故意删掉 <code>PlugIns/</code> 的假包必须被拒收）</td><td>CI 行为测试</td></tr>
 </table>
 
-<p>更新链路：<code>lyricManager.ts</code> 的 <code>PlaybackProgressUpdated</code> → <code>LyricUtil.setStatusBarLyricText</code> → <code>index.ios.ts</code> 联动 <code>NativeModules.MusicFreeLiveActivity.updateLyric</code> → ObjC 桥 → Swift 控制器 → <code>Activity.update(using:)</code>。</p>
+<p><b>第二批（v1.1.0）的状态契约：</b><code>ActivityAttributes</code> 在 <code>request</code> 之后不可变，早期把 <code>title / artist</code> 放在 attributes 里，切歌时标题永远显示写死的 <code>"MusicFree"</code>。现在 <code>ContentState</code> 承载全部 UI 状态（<code>title / artist / lyric / translation / previousLyric / nextLyric / isPlaying / duration / elapsed</code>），attributes 只剩不可变的 <code>source</code>；Swift 控制器以 <code>applyState(_ json:)</code> 为单一入口，RN 侧任何变更都转成一段 JSON patch。</p>
 
-<pre><code>// 关键取舍：本地更新，不用 APNs
-let state = MusicFreeLyricAttributes.ContentState(
-    lyric: lyric, previousLyric: nil, isPlaying: true)
-for activity in Activity&lt;MusicFreeLyricAttributes&gt;.activities {
-    Task { await activity.update(using: state) }
+<p>更新链路：<code>TrackPlayer</code> 的 4Hz <code>PlaybackProgressUpdated</code> → <code>overlay/src/native/liveActivity/index.ios.ts</code> 状态发布器（<code>installed</code> guard，读取 <code>currentMusic</code> / <code>currentLyricItem</code> / 翻译开关）→ <code>applyState</code> JSON patch → ObjC 桥（主线程派发）→ Swift 控制器（250ms 节流、幂等 start / stop）→ <code>Activity.update(using:)</code>。<code>lyricUtil/index.ios.ts</code> 只管 App 内浮层，桌面歌词开关发 <code>{"action":"start"}</code> / <code>{"action":"stop"}</code>，不再推歌词文本，也避免和 <code>lyricManager</code> 形成循环依赖。</p>
+
+<pre><code>// 所有 UI 状态都在 ContentState，attributes 只剩 source
+public struct ContentState: Codable, Hashable {
+    var title: String;          var artist: String
+    var lyric: String;          var translation: String?
+    var previousLyric: String?; var nextLyric: String?
+    var isPlaying: Bool;        var duration: Double
+    var elapsed: Double
+}
+// 有活动只 update，无活动才 request；pushType: nil = 本地更新
+if activities.isEmpty {
+    _ = try Activity.request(attributes: ..., contentState: state, pushType: nil)
+} else {
+    for activity in activities { Task { await activity.update(using: state) } }
 }</code></pre>
 
 <ul>
   <li><b>不用推送更新</b>：自签的未签名 IPA 拿不到可靠的 APNs 配置；<code>UIBackgroundModes = audio</code> 让进程在后台存活，歌词行可以持续本地更新。</li>
-  <li><b>1 秒节流 + 相同文本去重</b>：ActivityKit 有更新预算，逐行歌词（几秒一行）完全够用，也远低于 4 KB 状态上限。</li>
+  <li><b>4Hz → ~1Hz → 250ms 节流</b>：播放进度事件提到 0.25s，但曲目、歌词行、播放态、seek 之外的变化只在约 1Hz 心跳里写入；Swift 侧再做 250ms 最小间隔节流。既让歌词更贴声音，又不会撞 ActivityKit 的更新预算与 4 KB 状态上限。</li>
+  <li><b>本批新增的显示能力</b>：真实歌名 / 歌手、<code>isPlaying</code> 暂停态、上一句 / 当前句 / 翻译 / 下一句，以及 <code>ProgressView(value: elapsed/duration)</code> 进度条。进度条刻意不用 iOS 16 专属的 <code>ProgressView(timerInterval:)</code>：本机只有 CommandLineTools、没有 iOS SDK，无法对该 API 做类型检查，改由 1Hz 的 <code>elapsed</code> 驱动普通进度视图更稳。</li>
+  <li><b>幂等与收起</b>：<code>start</code> 不再 end / re-request，<code>stop</code> 主动 <code>end</code>；<code>lyricManager.setup()</code> 加 <code>listenersReady</code> 防重复注册，播放器重试不会堆叠卡片或放大歌词事件。</li>
   <li><b>降级路径仍然保留，但已不是默认状态</b>：ObjC 桥用 <code>NSClassFromString(@"MFLiveActivityController")</code> 运行时解析 Swift 类，并把 <code>-Swift.h</code> 依赖彻底去掉。<b>当前构建已接线，这个分支不会走到</b>；只有接线脚本失效、或被人为移除 target 时才会退回静默 no-op。为防这种静默回退，<code>verify_ipa.py</code> 现在把「产物里没有 <code>.appex</code>」直接判为失败，CI 另有行为测试兜底。</li>
 </ul>
 
@@ -230,7 +244,7 @@ setMediaTag                = 写入覆盖层（不碰音频文件）</code></pre
   <tr><td><code>overlay/ios/LiveActivity/*.swift / Info.plist / README.md</code></td><td>新增</td><td>灵动岛完整源码；<b>初版确实不入 target，现已由注入脚本自动接线</b>（见下表）</td></tr>
   <tr><td><code>scripts/inject_ios.py</code></td><td>修改</td><td>注入 <code>NSSupportsLiveActivities</code>、后台音频 / ATS / 文件共享、Bundle ID、<code>SplashScreen.storyboard</code>；<b>「改用 plist 启动屏」的初版做法后来被推翻</b>，见第五节更正</td></tr>
   <tr><td><code>scripts/build_unsigned_ipa.sh</code></td><td>修改</td><td>显式 <code>-sdk iphoneos</code></td></tr>
-  <tr><td><code>scripts/verify_adaptation.py</code></td><td>修改</td><td>静态校验从 19 项扩到当时 35 项，<b>当前 69 项</b></td></tr>
+  <tr><td><code>scripts/verify_adaptation.py</code></td><td>修改</td><td>静态校验从 19 项扩到当时 35 项，<b>当前 113 项</b></td></tr>
   <tr><td><code>README.md / VERIFICATION.md</code></td><td>修改</td><td>方案说明与验证记录</td></tr>
 </table>
 
@@ -241,8 +255,12 @@ setMediaTag                = 写入覆盖层（不碰音频文件）</code></pre
   <tr><td><code>scripts/inject_live_activity.py</code></td><td>幂等创建 Widget Extension target、Swift 源文件引用、<code>PlugIns</code> 拷贝阶段与 target 依赖；由 <code>inject_ios.py</code> 在每轮 <code>prepare.sh</code> 中调用</td></tr>
   <tr><td><code>scripts/inject_ios.py</code>（本批新增）</td><td>注入 <code>CFBundleURLTypes</code>（<code>musicfree://</code>）、<code>CFBundleDocumentTypes</code> + <code>UTImportedTypeDeclarations</code>（音频与 <code>.lrc</code> 导入）、插件沙盒 <code>os/platform</code> 改为 <code>Platform.OS</code>、版本检查与备份恢复请求独立 30s 超时</td></tr>
   <tr><td><code>scripts/verify_ipa.py</code> / <code>selftest_verify_ipa.py</code></td><td>缺 <code>.appex</code> 或 extension point 错误直接硬失败；行为测试验证「故意删掉扩展的假包确实被拒收」，避免注入器与验证器同源字符串的自证循环</td></tr>
-  <tr><td><code>scripts/check_injected_ts.js</code> / CI workflow</td><td>对 9 个注入后的 TS/TSX 做 <code>transpileModule</code> 语法检查；CI 增加 npm / Pods 缓存与脚本语法门禁</td></tr>
+  <tr><td><code>scripts/check_injected_ts.js</code> / CI workflow</td><td>对 12 个注入后的 TS/TSX 做 <code>transpileModule</code> 语法检查；CI 增加 npm / Pods 缓存与脚本语法门禁</td></tr>
   <tr><td><code>scripts/verify_signed_ipa.sh</code></td><td>签名后自检增加「扩展是否存在」硬检查，防止自签工具静默丢掉 <code>PlugIns/</code></td></tr>
+  <tr><td><code>ADAPTER_VERSION</code> / <code>ADAPTER_BUILD</code> / <code>scripts/bump_version.py</code></td><td>适配版本与上游 tag 解耦：App 版本 <code>1.1.0</code>、build <code>2</code>，驱动 pbxproj、Info.plist、IPA 文件名与 Release tag；<code>--expected-version</code> 会拒收旧包</td></tr>
+  <tr><td><code>overlay/ios/LiveActivity/*.swift</code></td><td>第二批重写：<code>ContentState</code> 承载全部 UI 状态；控制器单一 <code>applyState</code> 入口、幂等 start / stop、主线程派发、250ms 节流；Widget 显示真实歌名歌手、暂停态、翻译 / 上下句与进度条</td></tr>
+  <tr><td><code>overlay/src/native/liveActivity/index.ios.ts</code> / ObjC 桥</td><td>新增 RN 状态发布器与统一 JSON patch 桥；4Hz 进度事件 → ~1Hz ActivityKit 更新；<code>lyricManager.setup()</code> 加监听去重 guard</td></tr>
+  <tr><td><code>scripts/verify_adaptation.py</code> / <code>check_injected_ts.js</code></td><td>静态校验 69 → <b>113 项</b>，注入 TS 语法检查 9 → <b>12 个</b>文件，新增 <code>ContentState</code> 结构解析、版本 provenance 与 Swift 控制器结构断言</td></tr>
 </table>
 
 <h2>五、顺带修掉的云端构建阻塞</h2>
@@ -270,9 +288,9 @@ Command SwiftCompile failed with a nonzero exit code
 
 <h2>七、验证状态与边界</h2>
 
-<div class="ok"><b>已验证：</b><code>prepare.sh</code> 静态校验 <b>69 项 0 失败</b>；连续两次重放聚合哈希一致（幂等）；<code>project.pbxproj</code> / 两个 <code>Info.plist</code> 通过 <code>plutil -lint</code>；podspec <code>ruby -c</code>、Python <code>py_compile</code>、shell <code>bash -n</code>、注入后 9 个 TS/TSX 的 <code>transpileModule</code> 语法检查全部通过；<b>云端完整 Release archive 成功</b>，三个 Objective-C 模块与三份 Swift 源码都通过编译链接；<b>云端 CI run <code>43142605387</code> 全步骤通过</b>（脚本语法门禁、注入 TS 语法、<code>ibtool</code> 冒烟、完整 archive、verifier 行为测试），28m37s；<code>verify_ipa.py</code> 确认新包（SHA-256 <code>aaace2c4…</code>，6,963,340 B）未签名、含 JS bundle、含 <code>MusicFreeLiveActivity.appex</code> 且 extension point 正确；<b>从新包内解出的 <code>Info.plist</code> 实测带 <code>musicfree</code> URL scheme、2 个文档类型与 6 个自定义 UTI</b>；行为测试确认删掉 <code>PlugIns/</code> 的假包会被拒收；两份 dSYM 的 UUID 与包内二进制逐一吻合。</div>
+<div class="ok"><b>已验证：</b><code>prepare.sh</code> 静态校验 <b>113 项 0 失败</b>；连续两次重放聚合哈希一致（幂等）；<code>project.pbxproj</code> / 两个 <code>Info.plist</code> 通过 <code>plutil -lint</code>；podspec <code>ruby -c</code>、Python <code>py_compile</code>、shell <code>bash -n</code>、注入后 12 个 TS/TSX 的 <code>transpileModule</code> 语法检查全部通过；<b>云端完整 Release archive 成功</b>，三个 Objective-C 模块与三份 Swift 源码都通过编译链接；<b>云端 CI run <code>43142605387</code> 全步骤通过</b>（脚本语法门禁、注入 TS 语法、<code>ibtool</code> 冒烟、完整 archive、verifier 行为测试），28m37s；<code>verify_ipa.py</code> 确认新包（SHA-256 <code>aaace2c4…</code>，6,963,340 B）未签名、含 JS bundle、含 <code>MusicFreeLiveActivity.appex</code> 且 extension point 正确；<b>从新包内解出的 <code>Info.plist</code> 实测带 <code>musicfree</code> URL scheme、2 个文档类型与 6 个自定义 UTI</b>；行为测试确认删掉 <code>PlugIns/</code> 的假包会被拒收；两份 dSYM 的 UUID 与包内二进制逐一吻合。<br><br><b>第二批（v1.1.0）本地验证：</b>静态校验 <b>113 项 0 失败</b>、二次重放聚合哈希一致（幂等）、12 个注入后 TS/TSX 语法检查通过、3 个 Swift 文件 <code>swiftc -parse</code> 通过、<code>plutil -lint</code> / YAML / 脚本语法门禁通过；<code>MARKETING_VERSION = 1.1.0</code>、<code>CURRENT_PROJECT_VERSION = 2</code> 与两个 provenance key 实测注入；<b>把第一批旧包喂给 <code>--expected-version 1.1.0</code> 会返回 <code>VERIFY FAILED</code></b>，证明版本门禁能拦住错包。注意 <code>swiftc -parse</code> 只做语法解析，SwiftUI / ActivityKit 的类型检查与完整编译链接仍只能由 CI 的 Xcode 16.2 证明。</div>
 
-<div class="danger"><b>仍待验证：</b>① 浮层拖动与触摸穿透、ID3 <code>USLT</code>/<code>SYLT</code> 实际解码、元数据覆盖层读写、后台音频与锁屏联动，这些都需要<b>真机</b>；② 自签工具（Sideloadly / AltStore / ESign）对含 <code>.appex</code> 包的完整重签安装流程；③ 第一批新增的 <code>musicfree://</code> 深链与「文件」App 导入<b>已随 CI run <code>43142605387</code> 进包并核验过 plist 声明</b>，但系统侧行为仍需真机确认「Safari 能唤起 App」「分享菜单出现 MusicFree」；④ CI 缓存本次是冷启动（28m37s，比上一轮 25m55s 还长，且 runner 有排队提示），<b>加速效果要等第二次命中缓存的构建才能判断</b>；⑤ 自动同步的「发现新 tag → 重新构建 → 发 Release」全链路还没真实触发过。这些都不算已完成交付。</div>
+<div class="danger"><b>仍待验证：</b>① 浮层拖动与触摸穿透、ID3 <code>USLT</code>/<code>SYLT</code> 实际解码、元数据覆盖层读写、后台音频与锁屏联动，这些都需要<b>真机</b>；② 自签工具（Sideloadly / AltStore / ESign）对含 <code>.appex</code> 包的完整重签安装流程；③ 第一批新增的 <code>musicfree://</code> 深链与「文件」App 导入<b>已随 CI run <code>43142605387</code> 进包并核验过 plist 声明</b>，但系统侧行为仍需真机确认「Safari 能唤起 App」「分享菜单出现 MusicFree」；④ CI 缓存本次是冷启动（28m37s，比上一轮 25m55s 还长，且 runner 有排队提示），<b>加速效果要等第二次命中缓存的构建才能判断</b>；⑤ 自动同步的「发现新 tag → 重新构建 → 发 Release」全链路还没真实触发过。这些都不算已完成交付；<b>⑥ 第二批（v1.1.0）新增的切歌标题/歌手刷新、暂停态、翻译与上下句、进度条推进、关闭桌面歌词或播放结束后实时活动是否收起，全部待真机确认</b>，且完整 Xcode 编译结论以 CI 为准；⑦ O3 音频会话（来电恢复、耳机拔插、锁屏拖动进度）按路线图单独一批，本批未动。</div>
 
 <h2>八、能力对照总表</h2>
 
@@ -287,11 +305,16 @@ Command SwiftCompile failed with a nonzero exit code
   <tr><td>插件 / 播放 / 下载 / WebDAV</td><td>JS 层</td><td>JS 层，不变</td><td>不受影响</td></tr>
   <tr><td>插件一键安装深链</td><td><code>musicfree://</code></td><td><code>CFBundleURLTypes</code> 激活上游已有的 <code>musicfree://install/</code> 处理</td><td>已进包，待真机确认</td></tr>
   <tr><td>从「文件」App 导入歌曲 / 歌词</td><td>系统分享</td><td><code>CFBundleDocumentTypes</code> + <code>UTImportedTypeDeclarations</code>（mp3/m4a/wav/flac/ogg/… 与 .lrc）</td><td>已进包，待真机确认</td></tr>
+  <tr><td>实时活动显示真实歌名 / 歌手</td><td>状态栏歌词带曲目信息</td><td><code>title / artist</code> 移入 <code>ContentState</code>，切歌只 <code>update</code></td><td>v1.1.0 已实现，待真机确认</td></tr>
+  <tr><td>暂停态 / 翻译 / 上下句</td><td>桌面歌词配置项</td><td><code>isPlaying / translation / previousLyric / nextLyric</code> 全部由状态发布器推送</td><td>v1.1.0 已实现，待真机确认</td></tr>
+  <tr><td>锁屏 / 灵动岛进度条</td><td>桌面歌词进度</td><td><code>ProgressView(value: elapsed/duration)</code>，1Hz <code>elapsed</code> 驱动</td><td>v1.1.0 已实现，待真机确认</td></tr>
+  <tr><td>实时活动生命周期</td><td>覆盖窗口重复调用幂等</td><td>有活动只 <code>update</code>、关闭时主动 <code>end</code>、监听注册去重</td><td>v1.1.0 已实现，待真机确认</td></tr>
+  <tr><td>独立适配版本号</td><td>无</td><td><code>ADAPTER_VERSION</code> / <code>ADAPTER_BUILD</code> + 包内 provenance + 产物版本硬校验</td><td>v1.1.0 已实现，产物待 CI 验收</td></tr>
 </table>
 
 <footer>
   工程仓库：<code>https://github.com/Beldon1018/musicfree-ios</code> ｜ 上游 <code>maotoumao/MusicFree</code>（AGPL-3.0，本适配层同样受其约束）<br>
-  交付物：当前未签名 IPA（含 <code>.appex</code>，需按签名指南递归重签）、适配工程源码（69 项静态校验 + 自动接线脚本）、<a href="signing-and-crash-guide.html">《签名与闪退排查》</a>、本文档。<br>
+  交付物：当前未签名 IPA（含 <code>.appex</code>，需按签名指南递归重签）、适配工程源码（113 项静态校验 + 自动接线脚本 + 版本工具）、<a href="signing-and-crash-guide.html">《签名与闪退排查》</a>、本文档。<br>
   不是官方 iOS 版；上游 AGPL-3.0，分发 IPA 时请一并公开对应源码。
 </footer>
 

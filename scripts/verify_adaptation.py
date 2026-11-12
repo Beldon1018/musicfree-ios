@@ -302,6 +302,140 @@ def main() -> int:
     check(build_script.exists() and "-sdk iphoneos" in build_script.read_text(encoding="utf-8"),
           "xcodebuild pins -sdk iphoneos")
 
+    # 4g. Version identity. The shipped version comes from ADAPTER_VERSION,
+    #     NOT from UPSTREAM_REF: one upstream tag can back many adapter
+    #     releases, and shipping every rebuild as "1.0.0" makes an installed
+    #     IPA impossible to identify.
+    version_file = root / "ADAPTER_VERSION"
+    build_file = root / "ADAPTER_BUILD"
+    adapter_version = (version_file.read_text(encoding="utf-8").strip()
+                       if version_file.exists() else "")
+    adapter_build = (build_file.read_text(encoding="utf-8").strip()
+                     if build_file.exists() else "")
+    check(bool(re.fullmatch(r"\d+\.\d+\.\d+", adapter_version)),
+          "ADAPTER_VERSION is valid semver", adapter_version)
+    check(adapter_build.isdigit(), "ADAPTER_BUILD is numeric", adapter_build)
+    check(f"MARKETING_VERSION = {adapter_version};" in pbx_text,
+          "pbxproj MARKETING_VERSION == ADAPTER_VERSION",
+          f"{adapter_version} expected in all targets")
+    check(f"CURRENT_PROJECT_VERSION = {adapter_build};" in pbx_text,
+          "pbxproj CURRENT_PROJECT_VERSION == ADAPTER_BUILD")
+    if info.exists():
+        with info.open("rb") as fh:
+            version_plist = plistlib.load(fh)
+        check(version_plist.get("MusicFreeAdapterVersion") == adapter_version,
+              "Info.plist records the adapter release")
+        check(version_plist.get("MusicFreeUpstreamRef")
+              == (root / "UPSTREAM_REF").read_text(encoding="utf-8").strip(),
+              "Info.plist records the upstream baseline")
+        check(version_plist.get("CFBundleShortVersionString") == "$(MARKETING_VERSION)",
+              "CFBundleShortVersionString resolves MARKETING_VERSION")
+    check((root / "scripts" / "bump_version.py").exists(),
+          "bump_version.py available for the next release")
+
+    # 4h. Batch 2 — Live Activity state is structured, mutable and driven by
+    #     exactly one guarded publisher. These are structural checks (parse the
+    #     ContentState block, look for forbidden patterns), not mere echoes of
+    #     the strings the injector wrote.
+    if attrs.exists():
+        at = attrs.read_text(encoding="utf-8")
+        cs_match = re.search(
+            r"public struct ContentState: Codable, Hashable \{(.*?)\n    \}",
+            at, re.S)
+        cs_body = cs_match.group(1) if cs_match else ""
+        check(bool(cs_body), "ContentState block parsed structurally")
+        for field, label in (
+            ("var title: String", "mutable track title"),
+            ("var artist: String", "mutable artist"),
+            ("var translation: String?", "separate translation line"),
+            ("var previousLyric: String?", "previous line"),
+            ("var nextLyric: String?", "next line"),
+            ("var isPlaying: Bool", "play/pause state"),
+            ("var duration: Double", "track duration"),
+            ("var elapsed: Double", "playback position for the progress bar"),
+        ):
+            check(field in cs_body, f"ContentState carries {label}")
+        # Frozen attributes must not contain any UI field anymore.
+        attr_tail = at[cs_match.end():] if cs_match else ""
+        check("var title:" not in attr_tail and "var artist:" not in attr_tail,
+              "title/artist removed from immutable ActivityAttributes")
+
+    ctrl = la_dir / "MusicFreeLiveActivityController.swift"
+    if ctrl.exists():
+        ct = ctrl.read_text(encoding="utf-8")
+        check("@objc static func applyState" in ct,
+              "single JSON-patch entry point exists")
+        check("if activities.isEmpty" in ct and "guard startRequested" in ct,
+              "start is idempotent (update existing activity, never re-request)")
+        check("activity.end(dismissalPolicy: .immediate)" in ct,
+              "stop dismisses activities")
+        check("DispatchQueue.main.async" in ct,
+              "ActivityKit state is confined to the main queue")
+        check("minimumInterval: TimeInterval = 0.25" in ct,
+              "high-frequency patches throttled after the 4 Hz change")
+        check("pushType: nil" in ct,
+              "updates stay local (no APNs certificate in a sideload build)")
+
+    widget = la_dir / "MusicFreeLiveActivityWidget.swift"
+    if widget.exists():
+        wt = widget.read_text(encoding="utf-8")
+        check("context.attributes.title" not in wt,
+              "Widget no longer reads immutable attributes.title")
+        check("state.isPlaying" in wt, "Widget renders play/pause state")
+        check("ProgressView(value:" in wt, "Widget renders a progress bar")
+        check("ProgressView(timerInterval:" not in wt
+              and "Text(timerInterval:" not in wt,
+              "no iOS-16-only timerInterval API (unverifiable without an iOS SDK)")
+        check("state.translation" in wt and "state.previousLyric" in wt,
+              "Widget renders translation and neighbouring lines")
+
+    la_module = pod_src / "MusicFreeLiveActivityModule.m"
+    if la_module.exists():
+        lm = la_module.read_text(encoding="utf-8")
+        check("RCT_EXPORT_METHOD(applyState:" in lm,
+              "RN bridge exports the JSON state patch method")
+        check("dispatch_get_main_queue()" in lm,
+              "RN bridge dispatches every call to the main queue")
+
+    bridge = src / "native" / "liveActivity" / "index.ios.ts"
+    check(bridge.exists(), "Live Activity state publisher overlay exists")
+    if bridge.exists():
+        br = bridge.read_text(encoding="utf-8")
+        check("let installed = false" in br and "if (installed" in br,
+              "publisher registers RNTP listeners exactly once (O0.2)")
+        check("TrackPlayer.currentMusic" in br,
+              "publisher reads the real track title/artist")
+        check("lyricManager.currentLyricItem" in br,
+              "publisher reads the parsed lyric line")
+        check('"lyric.showTranslation"' in br,
+              "publisher honours the translation setting")
+        check("action: \"start\"" in br and "action: \"stop\"" in br,
+              "publisher starts / dismisses the activity")
+        check(">= 900" in br,
+              "4 Hz progress stream is throttled to ~1 Hz updates")
+
+    lyric_override = overrides["LyricUtil"]
+    if lyric_override.exists():
+        lo = lyric_override.read_text(encoding="utf-8")
+        check('liveCall("start", "MusicFree", "")' not in lo,
+              "hardcoded 'MusicFree' title removed from LyricUtil")
+        check("startLiveActivity" in lo and "stopLiveActivity" in lo,
+              "desktop-lyric toggle starts / stops the activity")
+
+    if bootstrap.exists():
+        bt2 = bootstrap.read_text(encoding="utf-8")
+        check("progressUpdateEventInterval: 0.25," in bt2,
+              "O2: lyric events arrive at 4 Hz instead of 1 Hz")
+        check("setupLiveActivityBridge();" in bt2,
+              "bridge installed after lyricManager.setup()")
+        check("progressUpdateEventInterval: 1," not in bt2,
+              "no stale 1 s progress interval")
+
+    lm_src = src / "core" / "lyricManager.ts"
+    if lm_src.exists():
+        check("listenersReady" in lm_src.read_text(encoding="utf-8"),
+              "O0.2: lyricManager.setup() listener registration is guarded")
+
     # 5. App entry point.
     check((upstream / "index.js").exists() or (upstream / "index.ts").exists(), "JS entry point exists")
 

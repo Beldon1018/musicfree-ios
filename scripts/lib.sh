@@ -16,6 +16,16 @@ read_ref() {
   tr -d '[:space:]' < "${ADAPTER_ROOT}/UPSTREAM_REF"
 }
 
+# The shipped app version is tracked by the adapter itself, NOT by the
+# upstream tag. See scripts/bump_version.py for the versioning policy.
+read_adapter_version() {
+  tr -d '[:space:]' < "${ADAPTER_ROOT}/ADAPTER_VERSION"
+}
+
+read_adapter_build() {
+  tr -d '[:space:]' < "${ADAPTER_ROOT}/ADAPTER_BUILD"
+}
+
 ensure_upstream() {
   local ref="$1"
   if [[ ! -d "${UPSTREAM_DIR}/.git" ]]; then

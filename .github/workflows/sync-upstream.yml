@@ -82,11 +82,14 @@ jobs:
           git commit -m "chore: sync upstream to $LATEST and publish unsigned iOS build" || echo "nothing to commit"
           git push
 
-          TAG="ios-$LATEST"
+          # Release identity carries BOTH versions: one upstream tag can back
+          # several adapter releases, so "ios-<upstream-tag>" is ambiguous.
+          ADAPTER_VERSION="$(tr -d '[:space:]' < ADAPTER_VERSION)"
+          TAG="ios-v${ADAPTER_VERSION}-${LATEST}"
           gh release view "$TAG" >/dev/null 2>&1 && gh release delete "$TAG" -y || true
           gh release create "$TAG" dist/*.ipa \
-            --title "MusicFree iOS unsigned — $LATEST" \
-            --notes "Automatically built from upstream MusicFree \`$LATEST\` by the iOS adapter. Unsigned IPA: re-sign with Sideloadly / AltStore / ESign before installing. Not an official MusicFree release."
+            --title "MusicFree iOS unsigned — v${ADAPTER_VERSION} (upstream $LATEST)" \
+            --notes "Automatically built from upstream MusicFree \`$LATEST\` by iOS adapter \`v${ADAPTER_VERSION}\`. Unsigned IPA: re-sign with Sideloadly / AltStore / ESign before installing. Not an official MusicFree release."
 
   notify:
     needs: [check, build]

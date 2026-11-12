@@ -2,6 +2,7 @@
 """Verify that the produced .ipa is unsigned and actually contains a JS bundle."""
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import plistlib
@@ -11,11 +12,14 @@ from pathlib import Path
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: verify_ipa.py <path/to.ipa>", file=sys.stderr)
-        return 2
+    ap = argparse.ArgumentParser()
+    ap.add_argument("ipa")
+    ap.add_argument("--expected-version", default="",
+                    help="fail unless the built Info.plist carries this "
+                         "ADAPTER_VERSION and CFBundleShortVersionString")
+    args = ap.parse_args()
 
-    p = Path(sys.argv[1])
+    p = Path(args.ipa)
     if not p.is_file():
         print(json.dumps({"error": f"not found: {p}"}))
         return 1
@@ -72,6 +76,8 @@ def main() -> int:
         "bundle_id": info.get("CFBundleIdentifier"),
         "marketing_version": info.get("CFBundleShortVersionString"),
         "build_version": info.get("CFBundleVersion"),
+        "adapter_version": info.get("MusicFreeAdapterVersion"),
+        "upstream_ref": info.get("MusicFreeUpstreamRef"),
         "min_os": info.get("MinimumOSVersion"),
         "platforms": info.get("CFBundleSupportedPlatforms"),
         "js_bundle_included": bool(bundles),
@@ -96,6 +102,16 @@ def main() -> int:
         failed.append("main.jsbundle missing — app would launch to a blank screen")
     if not exe_present:
         failed.append("Mach-O executable missing")
+    if args.expected_version:
+        expected = args.expected_version.strip()
+        marketing = info.get("CFBundleShortVersionString")
+        adapter = info.get("MusicFreeAdapterVersion")
+        if marketing != expected:
+            failed.append(f"CFBundleShortVersionString is {marketing!r}, "
+                          f"expected ADAPTER_VERSION {expected!r}")
+        if adapter != expected:
+            failed.append(f"MusicFreeAdapterVersion is {adapter!r}, "
+                          f"expected {expected!r} — stale pbxproj/plist injection")
     if not launch_resources:
         failed.append("no compiled launch screen in bundle — "
                       "system has nothing to show during cold start")

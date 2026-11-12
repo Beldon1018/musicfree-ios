@@ -507,3 +507,62 @@ await axios.get(url, { headers: { "Cache-Control": "no-cache", ... } })
 **关于缓存效果（如实记录）**：本次是缓存冷启动，且 runner 有容量排队提示，28m37s 比上一轮 `43022942754` 的 25m55s 更长，**不能据此判断 O6 缓存是否奏效**，需要第二次命中缓存的构建对比。
 
 **仍需真机确认**：Safari 打开 `musicfree://install/…` 能否唤起 App；「文件」App 长按 mp3/lrc 的分享菜单是否出现 MusicFree；含 `.appex` 的包经 Sideloadly / AltStore / ESign 重签后能否正常安装并出现锁屏 / 灵动岛歌词。
+
+---
+
+## 第二批：独立版本号 + 灵动岛播放体验（2026-11-12）
+
+范围来自 `FEATURE_ROADMAP.md` 第 2 批：O0.2 → O1 → N2 → O2；**O3 音频会话按路线图仍单独一批**。用户额外要求「更新一个版本吧，不能总是一个版本号」，因此本批同时把适配版本与上游 tag 解耦为 `ADAPTER_VERSION = 1.1.0` / `ADAPTER_BUILD = 2`。
+
+### 版本机制改动
+
+| 文件 | 内容 |
+| --- | --- |
+| `ADAPTER_VERSION` / `ADAPTER_BUILD`（新增） | `1.1.0` / `2`，唯一的版本来源 |
+| `scripts/bump_version.py`（新增） | `major \| minor \| patch` / `--set X.Y.Z` / `--show`；每次 bump 让 build +1，并打印预期 IPA 名 |
+| `scripts/lib.sh` | `read_adapter_version()` / `read_adapter_build()` |
+| `scripts/prepare.sh` | 读取并导出 `ADAPTER_VERSION` / `ADAPTER_BUILD`，日志打印适配器版本 |
+| `scripts/inject_ios.py` | 新增 `read_version_files()`；`version_from_ref()` 降级为 fallback；`inject_info_plist()` 写 `MusicFreeAdapterVersion` / `MusicFreeUpstreamRef`；`inject_pbxproj()` 用适配版本替换上游 tag 与旧 `BUILD_NUMBER` |
+| `upstream/ios/MusicFree/Info.plist`（生成物） | `CFBundleShortVersionString = $(MARKETING_VERSION)`、`CFBundleVersion = $(CURRENT_PROJECT_VERSION)` + 两个 provenance key |
+| `upstream/ios/MusicFree.xcodeproj/project.pbxproj`（生成物） | `MARKETING_VERSION = 1.1.0;`、`CURRENT_PROJECT_VERSION = 2;` |
+| `scripts/build_unsigned_ipa.sh` | 产物改名为 `MusicFree-v${VERSION}-ios-unsigned.ipa`；调用 `verify_ipa.py --expected-version "${VERSION}"` |
+| `scripts/verify_ipa.py` | 新增 `--expected-version`；report 增加 `adapter_version` / `upstream_ref`；`CFBundleShortVersionString` 与 `MusicFreeAdapterVersion` 任一不符即硬失败 |
+| `.github/workflows/build-ios-unsigned.yml` | 新增 `Resolve adapter version` step，把 version / build 写入 `$GITHUB_OUTPUT`；job summary 打印版本与预期 artifact 文件名 |
+| `.github/workflows/sync-upstream.yml` | Release tag 改为 `ios-v${ADAPTER_VERSION}-${LATEST}`，标题同时标注适配版本与上游 tag |
+
+### 运行时改动（Swift / ObjC / TS 三层）
+
+| 文件 | 内容 |
+| --- | --- |
+| `overlay/ios/LiveActivity/MusicFreeLyricAttributes.swift` | `ContentState` 成为唯一 UI 状态来源：`title/artist/lyric/translation/previousLyric/nextLyric/isPlaying/duration/elapsed`；attributes 只剩不可变的 `source`；全部 `@available(iOS 16.1, *)` |
+| `overlay/ios/LiveActivity/MusicFreeLiveActivityController.swift` | `StatePatch`(Codable) + `Snapshot` + `applyState(_ json:)` 单一入口；主线程派发；250ms 节流；`activities.isEmpty` 才 `request`，否则只 `update`；`action: "stop"` 主动 `end`；`pushType: nil` 保持本地更新；保留旧 `start` / `updateLyric` / `stop` 兼容 |
+| `overlay/ios/LiveActivity/MusicFreeLiveActivityWidget.swift` | 从 `context.state` 读真实歌名/歌手；渲染 `isPlaying` 暂停态、上一句 / 当前句 / 翻译 / 下一句；`ProgressView(value: elapsed/duration)` 进度条；私有 subviews / helper 加 `@available(iOS 16.1, *)`；`mmss` 改字符串插值，避免 `String(format:)` 的 `CVarArg` 类型风险 |
+| `overlay/ios/LocalPods/MusicFreeNative/MusicFreeNative/MusicFreeLiveActivityModule.m` | 只暴露 `RCT_EXPORT_METHOD(applyState:)`；`start` / `updateLyric` / `stop` 统一构造 JSON patch；`MFDispatch1` / `MFSafeString` / `MFJSON` helpers，全部 `dispatch_get_main_queue()`；删除 `MFDispatch2` 与 legacy fallback，避免两套调用链 |
+| `overlay/src/native/liveActivity/index.ios.ts`（新增） | 唯一 Live Activity 状态发布器：`installed` guard 防重复注册；读 `currentMusic` / `currentLyricItem` / `lyricState.lyrics` / `lyric.showTranslation`；4Hz progress 不 1:1 转发，曲目 / 行 / 播放态 / seek 立即发，其余 ~1Hz heartbeat |
+| `overlay/src/native/lyricUtil/index.ios.ts` | 不再推歌词文本给 Live Activity，只控制 App 内浮层；`showStatusBarLyric` / `hideStatusBarLyric` 直接发 `{"action":"start"/"stop"}`；**不 import `liveActivity`**，避免 `liveActivity → lyricManager → lyricUtil` 循环依赖 |
+| `scripts/inject_ios.py` | `inject_bootstrap_batch2()`：加 `setupLiveActivityBridge` import、`progressUpdateEventInterval: 0.25`、在 `lyricManager.setup()` 后调用；`inject_lyric_manager_guard()`：加 `listenersReady` 防重复注册 |
+| `overlay/ios/LiveActivity/README.md` | 重写为 Batch 2 state contract、JSON patch 示例、更新预算表、验证步骤 |
+| `scripts/verify_adaptation.py` | 从 69 → **113 项**：版本 semver / build numeric、provenance、`ContentState` 正则结构解析、Controller 幂等与主线程、Widget 不再读 `attributes.title`、不使用 iOS-16-only `timerInterval:` API、RN 桥 / TS 发布器 / bootstrap / lyricManager 注入断言 |
+| `scripts/check_injected_ts.js` | 9 → **12 个**文件，新增 `lyricManager.ts`、`liveActivity/index.ios.ts`、`lyricUtil/index.ios.ts` |
+
+### 本地验证结果
+
+| # | 验证项 | 结果 |
+| --- | --- | --- |
+| 68 | `bash scripts/prepare.sh`（两次） | **113 项 0 失败**，`{"checks":113,"failed":0,"failures":[]}`；日志 `adapter version : 1.1.0 (build 2)` |
+| 69 | 二次重放幂等 | 聚合哈希 `dbe0e2f65eba9bdfb66786af49bfaae82d4d10f1` 两次一致，`IDEMPOTENT=True` |
+| 70 | 注入后 TS 语法 | `{"files":12,"failures":0}` |
+| 71 | Swift 语法 | 3 个文件 `swiftc -parse` 全部 OK |
+| 72 | `plutil -lint` | app `Info.plist`、`project.pbxproj`、extension `Info.plist` 均 OK |
+| 73 | 语法门禁 | `py_compile` / `node --check` / `bash -n` 全通过 |
+| 74 | CI workflow YAML | 两个 workflow `YAML.load_file` 通过 |
+| 75 | 版本注入实测 | `MARKETING_VERSION = 1.1.0;`、`CURRENT_PROJECT_VERSION = 2;`、`MusicFreeAdapterVersion = 1.1.0`、`MusicFreeUpstreamRef = v1.0.0-beta.4` |
+| 76 | `bump_version.py --show` | `{"adapter_version":"1.1.0","adapter_build":2,"upstream_ref":"v1.0.0-beta.4"}` |
+| 77 | **旧包版本门禁（反向测试）** | 第一批 IPA + `--expected-version 1.1.0` → `rc=1`、`VERIFY FAILED: CFBundleShortVersionString is '1.0.0'` / `MusicFreeAdapterVersion is None`，证明旧包不会被当作 v1.1.0 交付 |
+| 78 | `selftest_verify_ipa.py` | 真包通过；删掉 `PlugIns/` 的假包仍被判 `VERIFY FAILED` |
+| 79 | RN 模块依赖方向 | `liveActivity → lyricManager → lyricUtil` 单向，`lyricUtil` 无 `import ... liveActivity` |
+| 80 | 循环依赖 / 兼容路径 | 删除 `MFDispatch2` 与 legacy Swift shim fallback，桥接链路唯一 |
+
+**如实说明的边界**：`swiftc -parse` 只做语法解析，当前工作机只有 CommandLineTools、没有 iOS SDK（已实测 `SDK "iphoneos" cannot be located`），因此 SwiftUI / ActivityKit 的**类型检查与完整编译链接只能由 CI 的 Xcode 16.2 证明**。为降低这类只能在完整 Xcode 下暴露的风险，本批刻意不用 `ProgressView(timerInterval:)` / `Text(timerInterval:)`，进度条改由 1Hz `elapsed` 驱动普通 `ProgressView(value:)`，并给所有引用 availability-gated `ContentState` 的私有 subview / helper 加 `@available(iOS 16.1, *)`。
+
+**仍待真机确认**：切歌后锁屏 / 灵动岛标题与歌手是否刷新、暂停态、翻译与上下句、进度条推进、关闭桌面歌词或播放结束后实时活动是否收起，以及第一批遗留的 `musicfree://` 深链与「文件」App 分享菜单。

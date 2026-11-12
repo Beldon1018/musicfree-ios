@@ -6,11 +6,22 @@
  * to iOS-native presentation instead of a no-op:
  *
  *   - MusicFreeNative/LyricUtilModule.m  -> draggable in-app lyric card
- *   - MusicFreeLiveActivity (optional)   -> Dynamic Island / Lock Screen
+ *   - native/liveActivity (batch 2)      -> Dynamic Island / Lock Screen
  *
  * `index.ios.ts` fully replaces upstream's `index.ts` under Metro's platform
  * resolution, so the upstream module-load monkey patch never runs here. The
  * exported object stays mutable so any future upstream wrapper still works.
+ *
+ * Batch 2: lyric *text* is no longer pushed to the Live Activity from here.
+ * The dedicated bridge owns that state (real track title, play/pause,
+ * translation, previous/next lines and progress). Having two writers used to
+ * let the "\n"-joined translation string overwrite the structured state.
+ * This module now only starts / stops the activity around the desktop-lyric
+ * toggle and keeps driving the in-app floating card.
+ *
+ * Deliberately NOT importing `@/native/liveActivity`: that module reads
+ * `lyricManager`, which imports this file. Keeping this dependency one-way
+ * (liveActivity -> lyricManager -> lyricUtil) avoids a module init cycle.
  */
 import { NativeModules } from "react-native";
 
@@ -40,28 +51,28 @@ interface ILyricUtil {
     requestSystemAlertPermission: () => Promise<boolean>;
 }
 
-interface ILiveActivity {
-    start?: (title: string, artist: string) => void;
-    updateLyric?: (lyric: string) => void;
-    stop?: () => void;
+interface ILiveActivityNative {
+    applyState?: (stateJson: string) => void;
 }
 
 const native = NativeModules.LyricUtil as Partial<ILyricUtil> | undefined;
-const live = NativeModules.MusicFreeLiveActivity as ILiveActivity | undefined;
+const live = NativeModules.MusicFreeLiveActivity as
+    | ILiveActivityNative
+    | undefined;
 
-const noop = async (..._args: any[]): Promise<void> => {};
-
-/** The optional Live Activity module is absent unless ENABLE_LIVE_ACTIVITY=1. */
-const liveCall = (name: keyof ILiveActivity, ...args: any[]): void => {
+const pushLiveState = (patch: Record<string, unknown>): void => {
     try {
-        const fn = live?.[name];
-        if (typeof fn === "function") {
-            (fn as (...a: any[]) => void).apply(live, args);
-        }
+        live?.applyState?.(JSON.stringify(patch));
     } catch {
-        // A missing or unlinked extension must never break lyric playback.
+        // A missing / unlinked extension must never break lyric playback.
     }
 };
+
+/** Idempotent on the Swift side: an existing activity is updated, not rebuilt. */
+const startLiveActivity = (): void => pushLiveState({ action: "start" });
+const stopLiveActivity = (): void => pushLiveState({ action: "stop" });
+
+const noop = async (..._args: any[]): Promise<void> => {};
 
 const fallback: ILyricUtil = {
     showStatusBarLyric: noop,
@@ -87,16 +98,18 @@ const pick = <K extends keyof ILyricUtil>(key: K): ILyricUtil[K] => {
 const LyricUtil: ILyricUtil = {
     showStatusBarLyric: async (initLyric, config) => {
         await pick("showStatusBarLyric")(initLyric, config);
-        liveCall("start", "MusicFree", "");
-        if (initLyric) { liveCall("updateLyric", initLyric); }
+        // Idempotent: the Swift controller updates an existing activity rather
+        // than ending + re-requesting it (which used to stack cards).
+        startLiveActivity();
     },
     hideStatusBarLyric: async () => {
         await pick("hideStatusBarLyric")();
-        liveCall("stop");
+        stopLiveActivity();
     },
     setStatusBarLyricText: async (lyric: string) => {
+        // In-app floating card only. The Live Activity bridge publishes the
+        // structured (translation-aware) state from the RNTP progress stream.
         await pick("setStatusBarLyricText")(lyric);
-        liveCall("updateLyric", lyric);
     },
     setStatusBarLyricTop: pick("setStatusBarLyricTop"),
     setStatusBarLyricLeft: pick("setStatusBarLyricLeft"),

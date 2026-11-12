@@ -126,16 +126,21 @@
 
 ## 七、建议的三批路线图
 
-> 11-11 已经出现过「修 A 坏 B」的 ＋ 号菜单回归。**每批独立提交、独立跑满 `prepare.sh`（60 项）→ 二次注入幂等 → 一次 CI → 产物指纹 → 真机验证**，不要一次性全改完。
+> 11-11 已经出现过「修 A 坏 B」的 ＋ 号菜单回归。**每批独立提交、独立跑满 `prepare.sh`（当前 113 项）→ 二次注入幂等 → 一次 CI → 产物指纹 → 真机验证**，不要一次性全改完。
 
-**第 1 批 · 纯配置与工程（风险最低，一次 CI）**
+> **执行进度（2026-11-12）**：第 1 批已完成并重建出包（提交 `3b78436`、CI run `43142605387`）；第 2 批源码与本地全量验证已完成，随 v1.1.0 发布，产物与真机结论见 `VERIFICATION.md`。第 3 批未动。
+
+**第 1 批 · 纯配置与工程（风险最低，一次 CI）— 已完成**
 - O0.1（文档 + `verify_ipa.py` 硬失败）、O6（CI 缓存 + tsc）、**N4**（URL scheme）、**N5**（文档类型导入）、O5（插件收尾）
 - 验证：Safari 打开 `musicfree://install/…` 能唤起 App；「文件」App 分享菜单出现 MusicFree；CI 时长下降；`verify_ipa.py` 对无 `.appex` 的假包返回非 0。
+- 结果：前两项真机信号仍待确认；缓存冷启动 28m37s，**加速效果未被证实**；假包拒收已由行为测试证明。
 
-**第 2 批 · 灵动岛与播放体验（需真机）**
+**第 2 批 · 灵动岛与播放体验（需真机）— 源码已执行，随 v1.1.0 发布**
 - O0.2 → O1（`title/artist` 移入 ContentState + 幂等 start + 暂停态 + 翻译/上下句 + 结束收起）→ N2（进度条）→ O2（歌词精度）
-- O3 音频会话**单独再一批**，因为音频行为回归最难自查
-- 验证：切歌后锁屏标题跟着变、暂停显示暂停态、锁屏歌词不再残留、来电恢复后音频继续、歌词与声音对齐。
+- 额外纳入：应用户要求把适配版本与上游 tag 解耦（`ADAPTER_VERSION = 1.1.0` / `ADAPTER_BUILD = 2` + `bump_version.py` + `verify_ipa.py --expected-version`）
+- O3 音频会话**仍单独再一批**，因为音频行为回归最难自查；本批未动
+- 实现路径：`ContentState` 承载全部 UI 状态 → Swift `applyState(_ json:)` 单入口（幂等 start / 主动 stop / 主线程 / 250ms 节流）→ ObjC 桥统一 JSON patch → 新增 RN `liveActivity/index.ios.ts` 状态发布器（4Hz RNTP → ~1Hz ActivityKit 心跳）→ `lyricManager.setup()` 监听去重。进度条用 `ProgressView(value:)` 而非 iOS-16-only `timerInterval:`，以避开本机无 iOS SDK 的类型检查盲区。
+- 验证：本地 113 项 0 失败、12 个 TS/TSX 语法、3 个 Swift `swiftc -parse`、二次注入幂等、旧包版本拒收测试；**切歌标题、暂停态、翻译/上下句、进度条、结束收起仍需真机确认**，完整 Xcode 编译结论以 CI 为准。
 
 **第 3 批 · 视自签能力决定**
 - 先做一次 entitlement 可用性探针（个人免费证书能否签 App Group）；可行才上 N1(intent) / N3(方案B) / N6(数据版小组件) / N8；否则退回 `Link` 深链、纯快捷入口小组件。

@@ -10,13 +10,18 @@
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 REF="$(read_ref)"
-log "adapter root : ${ADAPTER_ROOT}"
-log "upstream ref : ${REF}"
+VERSION="$(read_adapter_version)"
+BUILD="$(read_adapter_build)"
+log "adapter root    : ${ADAPTER_ROOT}"
+log "upstream ref    : ${REF}"
+log "adapter version : ${VERSION} (build ${BUILD})"
 
 ensure_upstream "${REF}"
 apply_overlay
 
 log "injecting iOS project settings (Podfile / Info.plist / pbxproj)"
+export ADAPTER_VERSION="${VERSION}"
+export ADAPTER_BUILD="${BUILD}"
 "${PYTHON_BIN}" "${ADAPTER_ROOT}/scripts/inject_ios.py" --root "${ADAPTER_ROOT}" --ref "${REF}"
 
 log "verifying adaptation"

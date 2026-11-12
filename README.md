@@ -4,15 +4,19 @@
 
 **这不是官方 iOS 版**。官方 README 明确「目前只支持 Android 和 Harmony OS」，从无 IPA 产物。本工程是在官方源码之外加的一层适配，产物需自行重签后安装，且沿用上游 AGPL-3.0 许可。
 
-当前锁定上游版本：`v1.0.0-beta.4`（见 `UPSTREAM_REF`）。
+当前锁定上游版本：`v1.0.0-beta.4`（见 `UPSTREAM_REF`）；**适配层独立版本号 `1.1.0`（build `2`）**，见 `ADAPTER_VERSION` / `ADAPTER_BUILD`。上游 tag 只决定代码来源，不再决定 App 版本、build number、IPA 文件名或 Release tag —— 否则每轮适配改动都还得叫 `1.0.0` / `v1.0.0-beta.4`，分不清「上游没变、适配变了」的情况。
 
-**当前状态（2026-11-12，第一批已重建）**：最新未签名 IPA 已产出并校验通过（CI run `43142605387`，6,963,340 B，SHA-256 `aaace2c405ef967e…`）。产物为 iOS 15.1+、arm64、未签名、内嵌 `main.jsbundle`，含 `SplashScreen.storyboardc`、`musicfree` URL scheme、音频 / `.lrc` 文档类型，并**内嵌 `PlugIns/MusicFreeLiveActivity.appex`** —— 灵动岛 / 锁屏歌词已由 `scripts/inject_live_activity.py` 自动接线，不再是「源码预留」。`verify_ipa.py` 现在对缺 `.appex` 或 extension point 错误的包直接判失败，并有行为测试兜底。
+**当前状态（2026-11-12，第二批 v1.1.0）**：适配层第二批（灵动岛信息完整化、幂等生命周期、歌词精度）已完成源码改造与本地全量校验；版本号已与上游解耦，产物名固定为 `MusicFree-v1.1.0-ios-unsigned.ipa`。`verify_ipa.py --expected-version 1.1.0` 会拒收 `CFBundleShortVersionString` 或 `MusicFreeAdapterVersion` 不匹配的旧包，防止第一批的包被误当成新版本交付。**云端重建结果、新包指纹与 dSYM UUID 见本节下方「第二批交付」与 `VERIFICATION.md`**，在 v1.1.0 出包前，最近一次已验收产物仍是第一批的 `MusicFree-v1.0.0-beta.4-unsigned.ipa`（CI run `43142605387`，6,963,340 B，SHA-256 `aaace2c405ef967e…`）。
+
+已验收产物为 iOS 15.1+、arm64、未签名、内嵌 `main.jsbundle`，含 `SplashScreen.storyboardc`、`musicfree` URL scheme、音频 / `.lrc` 文档类型，并**内嵌 `PlugIns/MusicFreeLiveActivity.appex`** —— 灵动岛 / 锁屏歌词已由 `scripts/inject_live_activity.py` 自动接线，不再是「源码预留」。`verify_ipa.py` 现在对缺 `.appex` 或 extension point 错误的包直接判失败，并有行为测试兜底。
 
 两类历史启动故障已修复：① Expo SDK 52 原生启动硬编码 `UIStoryboard(name: "SplashScreen")`，旧包缺该资源；② [GitHub `macos-15` runner 镜像缺陷](https://github.com/actions/runner-images/issues/13560) 导致 `ibtool` 报 `iOS 18.2 Platform Not Installed.`（与 storyboard 内容无关）。CI 里无条件执行 `xcodebuild -downloadPlatform iOS` 并加 `ibtool` 冒烟测试。
 
 **自签时必须递归签名 `Frameworks/hermes.framework`，且先签 `PlugIns/*.appex`、再签 `.app`**；漏签扩展不会让 App 闪退，但会让灵动岛静默失效或安装被拒。见 [`docs/signing-and-crash-guide.html`](docs/signing-and-crash-guide.html)。完整记录见 `VERIFICATION.md`。
 
-> **第一批改动已完成并重建出包**：`musicfree://` URL scheme、音频与 `.lrc` 的文件导入、插件沙盒平台标识与网络超时收尾、CI 缓存与语法门禁、产物校验加固、签名文档修正，提交 `3b78436`。`prepare.sh` 为 **69 项 0 失败**，CI run `43142605387` 全步骤通过（含脚本语法、注入 TS 语法、`ibtool` 冒烟、archive、verifier 行为测试）；新包的 `Info.plist` 已实测带 `musicfree` scheme、2 个文档类型与 6 个自定义 UTI。**深链唤起与「文件」App 分享菜单仍需真机确认**。旧包 `77356a49…` 已备份为 `outputs/MusicFree-v1.0.0-beta.4-unsigned_pre-batch1.ipa`。
+> **第一批改动已完成并重建出包**：`musicfree://` URL scheme、音频与 `.lrc` 的文件导入、插件沙盒平台标识与网络超时收尾、CI 缓存与语法门禁、产物校验加固、签名文档修正，提交 `3b78436`。`prepare.sh` 当时为 **69 项 0 失败**，CI run `43142605387` 全步骤通过（含脚本语法、注入 TS 语法、`ibtool` 冒烟、archive、verifier 行为测试）；新包的 `Info.plist` 已实测带 `musicfree` scheme、2 个文档类型与 6 个自定义 UTI。**深链唤起与「文件」App 分享菜单仍需真机确认**。旧包 `77356a49…` 已备份为 `outputs/MusicFree-v1.0.0-beta.4-unsigned_pre-batch1.ipa`。
+
+> **第二批已落地并解耦版本（v1.1.0）**：`ADAPTER_VERSION = 1.1.0` / `ADAPTER_BUILD = 2`，`MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` 与 `CFBundleShortVersionString` / `CFBundleVersion` 全部由它们生成；IPA 内另写 `MusicFreeAdapterVersion` / `MusicFreeUpstreamRef` 两个 provenance key，`bump_version.py` 负责后续升版。改动覆盖 O0.2 / O1 / N2 / O2：所有 UI 状态移入 `ContentState`，`start` 幂等（已有活动只 `update`）、`stop` 主动收起、`lyricManager.setup()` 监听去重；锁屏 / 灵动岛显示真实歌名歌手、暂停态、翻译与上下句、进度条；RNTP 4Hz 进度事件经 ~1Hz 心跳与 Swift 250ms 节流后才写入 ActivityKit。O3（音频会话）按路线图仍单独一批。`prepare.sh` 现为 **113 项 0 失败**，注入后 **12 个** TS/TSX 语法检查、3 个 Swift `swiftc -parse`、二次注入幂等、旧包版本拒收测试均通过。**上述灵动岛行为仍需真机确认**；云端重建与产物指纹见 `VERIFICATION.md`。
 
 ---
 
@@ -22,7 +26,8 @@
 MusicFree 官方源码 (git tag, 每次重新检出)
         │
         ├── overlay/   新增文件（上游没有）→ 直接覆盖复制，永不冲突
-        │              · 3 个 index.ios.ts 平台覆盖
+        │              · 3 个原生模块 index.ios.ts 平台覆盖
+        │                + 1 个 Live Activity 状态发布器
         │              · 本地 Pod：iOS 原生模块（浮层 / ID3 / 覆盖层）+ podspec
         │              · LiveActivity/：灵动岛 / 锁屏实时活动 Swift 源码
         │                （inject_live_activity.py 自动接线 → .appex 进包）
@@ -32,7 +37,8 @@ MusicFree 官方源码 (git tag, 每次重新检出)
         │              · Podfile 挂本地 Pod、关新架构（RCT_NEW_ARCH_ENABLED=0）
         │              · Info.plist 补后台音频 / ATS / 文件共享 / 实时活动
         │                / musicfree:// scheme / 音频与 .lrc 文档类型
-        │              · pbxproj 换 Bundle ID、版本号、启动屏改名为 SplashScreen
+        │              · pbxproj 换 Bundle ID、按 ADAPTER_VERSION / ADAPTER_BUILD
+        │                写版本号、启动屏改名为 SplashScreen
         │              · 生成 SplashScreen.storyboard（Expo 原生启动必需）
         │              · bootstrap.ts / index.tsx：iOS 跳过 Android-only 启动调用
         │              · plugin.ts / checkUpdate.ts / backupSetting.tsx：
@@ -64,11 +70,11 @@ MusicFree 官方源码 (git tag, 每次重新检出)
 | Expo SDK 52 原生启动硬编码 `UIStoryboard(name: "SplashScreen", bundle: nil)`，上游 RN 模板只有 `LaunchScreen.storyboard`，pod 也不自带 → 找不到就抛异常，真机打开即闪退 | 从上游 storyboard 生成一份最小 `SplashScreen.storyboard`，把 pbxproj 中 7 处文件名引用改为同名，并设 `UILaunchStoryboardName = SplashScreen`；系统启动屏与 Expo 共用一份 `SplashScreen.storyboardc` |
 | `macos-15` runner 上 `ibtool` 编译任何 storyboard 都报「iOS 18.2 Platform Not Installed」 | **不是工程问题**：[`actions/runner-images#13560`](https://github.com/actions/runner-images/issues/13560) 证实该镜像移除了旧 Xcode 的 iOS runtime。CI 里先 `xcodebuild -downloadPlatform iOS`，再用 `ibtool --compile` 冒烟测试；`-sdk iphoneos`、精简 storyboard XML 都修不了（run `42853265361`、`42857755459` 已分别复现失败） |
 | 上游启动流程在 iOS 上误用 Android API | `bootstrap.ts` 的 Android 权限分支改为 `} else if (Platform.OS === "android") {`，不再调用 `PERMISSIONS.ANDROID.*`；`src/entry/index.tsx` 顶层的 `StatusBar.setBackgroundColor` / `setTranslucent` 同样按平台门控 |
-| Bundle ID 是 RN 模板值 | 改为 `com.musicfree.ios.unsigned`；版本号跟随上游 tag |
+| Bundle ID 是 RN 模板值、版本恒为 1.0.0 | 改为 `com.musicfree.ios.unsigned`；`MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` 由 `ADAPTER_VERSION` / `ADAPTER_BUILD` 生成，`Info.plist` 另写 provenance key，**与上游 tag 解耦** |
 | RN 0.76 默认开新架构 / bridgeless，真机第二份 `.ips` 显示启动崩溃 | `ios/Podfile.properties.json` 写 `newArchEnabled=false` + Hermes，**并且** `inject_ios.py` 往 `Podfile` 注入 `ENV['RCT_NEW_ARCH_ENABLED'] = '0'` —— Expo 会忽略 properties 文件，必须两处都设 |
 | 插件沙盒把运行环境谎报成 Android、下载/检查/恢复请求继承 2s 全局超时 | `plugin.ts` 的 `os` / `platform` 改 `Platform.OS`；`pluginManager/index.ts`、`pluginList.tsx`、`checkUpdate.ts`、`backupSetting.tsx` 给下载类请求独立 `timeout: 30000`，运行期请求仍保持 2s 节流 |
 
-其余 Android 痕迹（`BackHandler`、已有的 `Platform.OS === "android"` 分支、`react-native-fs`）本身都有 iOS 实现或已有条件分支。所有对上游文件的改写都集中在 `inject_ios.py` 中，按**内容锚点**做最小条件化，覆盖 `Podfile` / `Info.plist` / `project.pbxproj` / `bootstrap.ts` / `index.tsx` / `plugin.ts` / `checkUpdate.ts` / `backupSetting.tsx` 等；`prepare.sh` 每轮从干净 tag 重放一次。锚点一旦变化，注入器会明确报错，而不是静默产出一个装上去就崩的包。`verify_adaptation.py`（69 项）、`check_injected_ts.js`（注入后语法）与 `selftest_verify_ipa.py`（产物行为）是对应的三道护栏。
+其余 Android 痕迹（`BackHandler`、已有的 `Platform.OS === "android"` 分支、`react-native-fs`）本身都有 iOS 实现或已有条件分支。所有对上游文件的改写都集中在 `inject_ios.py` 中，按**内容锚点**做最小条件化，覆盖 `Podfile` / `Info.plist` / `project.pbxproj` / `bootstrap.ts` / `index.tsx` / `plugin.ts` / `checkUpdate.ts` / `backupSetting.tsx` 等；`prepare.sh` 每轮从干净 tag 重放一次。锚点一旦变化，注入器会明确报错，而不是静默产出一个装上去就崩的包。`verify_adaptation.py`（113 项）、`check_injected_ts.js`（注入后 12 个 TS/TSX 语法）、`selftest_verify_ipa.py`（产物行为）与 `verify_ipa.py --expected-version`（版本硬校验）是对应的四道护栏。
 
 > **签名后打开闪退 / 灵动岛没歌词？** 见 [`docs/signing-and-crash-guide.html`](docs/signing-and-crash-guide.html)：区分「IPA 启动链问题」「自签未递归签名 `hermes.framework`」「`.appex` 漏签」，含完整 `codesign` 顺序、两份 entitlements 与崩溃日志定位方法。
 
@@ -103,6 +109,40 @@ Android 的三项能力在 iOS 上不做「照搬」，而是换成 iOS 自己�
 
 `backupSetting.tsx` 是上游少见的 CRLF 文件，注入器为此改用 `read_text_exact()` / `write_text_exact()`，避免整文件换行风格被改写。
 
+### 第二批：独立版本号 + 灵动岛播放体验（v1.1.0）
+
+**版本号不再等于上游 tag。** `UPSTREAM_REF` 只负责「检出哪个上游版本」；App 对外版本由适配层自己的两个文件决定：
+
+| 载体 | 值 / 来源 | 说明 |
+| --- | --- | --- |
+| `ADAPTER_VERSION` | `1.1.0` | `MARKETING_VERSION` → `CFBundleShortVersionString`、IPA 文件名、Release tag |
+| `ADAPTER_BUILD` | `2` | `CURRENT_PROJECT_VERSION` → `CFBundleVersion`，每次 bump 自动 +1 |
+| `UPSTREAM_REF` | `v1.0.0-beta.4` | 只写入 `MusicFreeUpstreamRef`，作为包内溯源信息 |
+| `MusicFreeAdapterVersion` / `MusicFreeUpstreamRef` | 注入进 `Info.plist` | 解包即可知道「哪份适配 + 哪份上游」，不必靠文件名猜 |
+
+```bash
+python3 scripts/bump_version.py --show              # 查看当前版本
+python3 scripts/bump_version.py patch               # 1.1.0 → 1.1.1，build +1
+python3 scripts/bump_version.py --set 1.2.0         # 直接指定
+```
+
+`build_unsigned_ipa.sh` 会用 `--expected-version "${VERSION}"` 校验产物：三个 plist/pbxproj 值不一致就判失败。实测把第一批的旧包喂给 `--expected-version 1.1.0` 会返回 `VERIFY FAILED`（`CFBundleShortVersionString is '1.0.0'`、`MusicFreeAdapterVersion is None`），所以旧包不会被误交付为新版本。
+
+**灵动岛 / 锁屏实时活动这轮从「能显示」做到「显示对」。** 根因是 `ActivityAttributes` 在 `request` 之后不可变，早期把 `title` / `artist` 放在 attributes 里，切歌时标题永远是写死的 `"MusicFree"`；`start` 每次重建活动又会堆叠卡片。
+
+| 改动 | 做法 | 解决 |
+| --- | --- | --- |
+| 状态契约 | `title/artist/lyric/translation/previousLyric/nextLyric/isPlaying/duration/elapsed` 全部放进 `ContentState`，attributes 只留 `source` | 切歌、暂停、翻译、进度都能 `update` 刷新 |
+| 幂等生命周期 | Swift 控制器 `applyState(_ json:)` 单一入口：有活动则 `update`、无活动才 `request`；`stop` 主动 `end`；主线程派发 + 250ms 节流 | 不再堆叠卡片 / 反复闪烁 / 后台线程碰 UI |
+| RN 桥 | ObjC 只暴露 `applyState:`，`start` / `updateLyric` / `stop` 都拼成 JSON patch 走同一条链 | 消除两套调用路径 |
+| 状态发布器 | 新增 `overlay/src/native/liveActivity/index.ios.ts`：module-scoped `installed` guard，读 `currentMusic` / `currentLyricItem` / `lyricState.lyrics` / 翻译开关 | 真实歌名歌手、翻译与上下句、`isPlaying` 暂停态 |
+| 更新频率 | `progressUpdateEventInterval: 0.25`（4Hz）→ 曲目/行/播放态/seek 立即发，其余 ~1Hz 心跳 → Swift 250ms 节流 → ActivityKit | 歌词更贴声音，又不撞 4KB 状态预算与更新预算 |
+| 进度条 | SwiftUI `ProgressView(value: elapsed/duration)`；刻意不用 iOS 16-only 的 `timerInterval:` | 本机无 iOS SDK 也能做语法门禁，CI 里不引入类型检查风险 |
+| 监听去重 | `inject_lyric_manager_guard()` 给 `lyricManager.setup()` 加 `listenersReady` | 播放器错误重试不再 N 倍触发歌词事件 |
+| 依赖方向 | `lyricUtil` 不 import `liveActivity`，直接发 `{"action":"start"/"stop"}` | 避免 `liveActivity → lyricManager → lyricUtil` 循环依赖 |
+
+进度条刻意用「1Hz 推 `elapsed` + 普通 `ProgressView(value:)`」而不是 `ProgressView(timerInterval:)`：后者是 iOS 16 专属 API，当前工作机只有 CommandLineTools、没有 iOS SDK，`swiftc -parse` 无法验证其类型可用性，交给 CI 赌一次编译不划算。设计细节见 `overlay/ios/LiveActivity/README.md`。
+
 详见 [`docs/ios-native-alternatives.html`](docs/ios-native-alternatives.html)（完整方案、系统/自签限制、产物校验与实施顺序）。
 
 ---
@@ -127,7 +167,7 @@ bash scripts/prepare.sh                 # 检出上游 + 重放适配层 + 静�
 bash scripts/build_unsigned_ipa.sh      # npm ci → pod install → Release archive → 未签名 IPA
 ```
 
-产物在 `build/MusicFree-<tag>-unsigned.ipa`。前置条件：完整 Xcode 16.x + `sudo xcode-select -s /Applications/Xcode.app` + CocoaPods + Node 20。**只有 CommandLineTools 是不够的**（当前这台 Intel Mac 就是这种情况），脚本会明确报错而不是给你一个假包。
+产物在 `build/MusicFree-v${ADAPTER_VERSION}-ios-unsigned.ipa`（当前为 `MusicFree-v1.1.0-ios-unsigned.ipa`）。`bump_version.py` 升版后，文件名、App 版本、build number 与 Release tag 会一起变化，不再与上游 tag 混用。前置条件：完整 Xcode 16.x + `sudo xcode-select -s /Applications/Xcode.app` + CocoaPods + Node 20。**只有 CommandLineTools 是不够的**（当前这台 Intel Mac 就是这种情况），脚本会明确报错而不是给你一个假包。
 
 国内网络可给脚本传镜像：
 
@@ -154,7 +194,7 @@ python3 scripts/sync_upstream.py --apply --ref v0.6.2        # 锁定某个 tag
 
 1. `check`（Ubuntu）：调 GitHub API 取最新 release tag，与 `UPSTREAM_REF` 比较。API 限流时自动回退到 `git ls-remote --tags`。
 2. 有新版 → 调用 `build-ios-unsigned.yml`（`macos-15` + Xcode 16.2），把新 tag 传进去重新检出、重放适配层、出包。
-3. 构建成功 → `publish`：上传 IPA 为 Release `ios-<tag>`，并**提交新的 `UPSTREAM_REF`**，至此完成同步。
+3. 构建成功 → `publish`：上传 IPA 为 Release `ios-v${ADAPTER_VERSION}-<upstream-tag>`（当前 `ios-v1.1.0-v1.0.0-beta.4`），标题同时标注适配版本与上游 tag，并**提交新的 `UPSTREAM_REF`**，至此完成同步。
 4. 构建失败 → **不 bump `UPSTREAM_REF`**，自动开一个 issue 附上 run 链接和排查提示。
 
 也可以从 Actions 页面手动触发，指定任意一个上游 tag 单独构建。
@@ -180,7 +220,7 @@ python3 scripts/sync_upstream.py --apply --ref v0.6.2        # 锁定某个 tag
 - **必须递归签名嵌套框架与扩展**：包内含 `Payload/MusicFree.app/Frameworks/hermes.framework` 和 `Payload/MusicFree.app/PlugIns/MusicFreeLiveActivity.appex`。只签主程序时，前者会让 dyld 在启动阶段杀掉进程（「打开即闪退」），后者会让安装被拒或灵动岛静默失效。手机端签名工具需开启「签名 Frameworks / 动态库」**和「签名 App Extension」**；手动 `codesign` 顺序为 `frameworks → .appex → .app`，且扩展 id `com.musicfree.ios.unsigned.lyrics` 必须是主 id 的子前缀。完整步骤与两份 entitlements 见 [`docs/signing-and-crash-guide.html`](docs/signing-and-crash-guide.html)。
 - **`verify_ipa.py` 会拒收不完整的包**：缺 `SplashScreen.storyboardc`（Expo 原生启动必需）、缺 `.appex`、或 `NSExtensionPointIdentifier` 不是 `com.apple.widgetkit-extension`，现在都直接判失败；`scripts/selftest_verify_ipa.py` 会用「故意删掉 `PlugIns/` 的假包必须被拒收」做行为验证，避免注入器与验证器的字符串自证循环。签完包后再用 `verify_signed_ipa.sh` 确认框架、扩展、deep 签名三项齐全。
 - **灵动岛已不是可选项**：要求 iOS 16.1+（灵动岛形态还需 iPhone 14 Pro 及以后机型），锁屏卡片在 16.1+ 全机型可用。Widget Extension target 已自动接线、随包产出，**不要为了省事把 `.appex` 删掉**。用户在系统设置里关闭「实时活动」时控制器会安静跳过，这是预期行为。
-- **编译验证状态**：本地 `prepare.sh` 现为 **69 项静态校验 0 失败**，另有注入后 9 个 TS/TSX 的语法检查、Python/Node/bash 语法门禁、`plutil -lint` 与二次注入幂等检查。云端 `macos-15` + Xcode 16.2 已完成多次完整 Release archive，三个 Objective-C 模块与 Swift 实时活动源码均通过编译链接；CI 里先 `xcodebuild -downloadPlatform iOS` 再加 `ibtool` 冒烟测试以绕开 runner 镜像缺陷。当前工作机没有完整 Xcode，因此**本地无法跑模拟器/真机**，只能做静态校验 + 推到仓库触发 CI；「真机不再闪退」「深链与文件导入可用」「灵动岛显示歌词」都必须由使用者在设备上确认，若仍崩溃需按签名指南导出 `.ips` 崩溃日志。若上游升级后某个第三方 RN 依赖缺 iOS podspec，仍需按日志补 Pod 或换实现。
+- **编译验证状态**：本地 `prepare.sh` 现为 **113 项静态校验 0 失败**，另有注入后 12 个 TS/TSX 的语法检查、3 个 Swift 文件的 `swiftc -parse`、Python/Node/bash 语法门禁、`plutil -lint`、二次注入幂等与旧包版本拒收测试。注意 `swiftc -parse` 只做语法解析，**不能替代完整 iOS SDK 下的类型检查与编译链接**；第二批 Swift 改动的最终编译结论以 CI 为准。云端 `macos-15` + Xcode 16.2 已完成多次完整 Release archive，三个 Objective-C 模块与 Swift 实时活动源码均通过编译链接；CI 里先 `xcodebuild -downloadPlatform iOS` 再加 `ibtool` 冒烟测试以绕开 runner 镜像缺陷。当前工作机没有完整 Xcode，因此**本地无法跑模拟器/真机**，只能做静态校验 + 推到仓库触发 CI；「真机不再闪退」「深链与文件导入可用」「灵动岛显示歌词」都必须由使用者在设备上确认；**第二批新增的切歌标题/歌手刷新、暂停态、翻译与上下句、进度条、关闭桌面歌词后收起，同样全部待真机验证**，若仍崩溃需按签名指南导出 `.ips` 崩溃日志。若上游升级后某个第三方 RN 依赖缺 iOS podspec，仍需按日志补 Pod 或换实现。
 - **AGPL-3.0**：上游是强传染性许可，本适配层同样受其约束；仓库根目录已放 `LICENSE`（AGPL-3.0 全文，取自上游），分发 IPA 时请一并公开对应源码。
 - **不是官方产物**：请勿把它当作 MusicFree 官方 iOS 版对外发布；插件可用性取决于上游音源状态。
 
@@ -189,28 +229,35 @@ python3 scripts/sync_upstream.py --apply --ref v0.6.2        # 锁定某个 tag
 ## 七、目录
 
 ```
-UPSTREAM_REF                     当前锁定的上游 tag
+UPSTREAM_REF                     当前锁定的上游 tag（只决定代码来源）
+ADAPTER_VERSION                  适配层对外版本（当前 1.1.0）
+ADAPTER_BUILD                    适配层 build number（当前 2）
 overlay/                        适配层新增文件（同步时全部重放）
-  src/native/*/index.ios.ts      3 个 Metro 平台覆盖
+  src/native/*/index.ios.ts      3 个 Metro 原生模块平台覆盖
+  src/native/liveActivity/       第二批新增：Live Activity 状态发布器
+                                 （RNTP 事件 → JSON patch → native）
   ios/LocalPods/MusicFreeNative/ iOS 原生模块（LyricUtil / Mp3Util / NativeUtils
                                  + Live Activity RN 桥）+ podspec
   ios/LiveActivity/              灵动岛 / 锁屏实时活动 Swift 源码 + 接线说明
                                  （脚本自动接线，已随包产出 .appex）
   ios/Podfile.properties.json    Expo 构建开关
 scripts/
-  lib.sh                        公共函数（检出/重置/复制）
+  lib.sh                        公共函数（检出/重置/复制/读版本文件）
   prepare.sh                    一键生成适配后的工程（幂等）
   inject_ios.py                 幂等注入 Podfile / Info.plist / pbxproj
                                 + URL scheme / 文档类型 / 插件平台标识 / 超时
+                                + 版本号与 provenance / 第二批 bootstrap 注入
+                                + lyricManager 监听去重
                                 + 生成 SplashScreen.storyboard
                                 + bootstrap.ts / index.tsx 启动门控
   inject_live_activity.py       幂等创建 Widget Extension target 与 PlugIns 拷贝阶段
-  verify_adaptation.py          无需 Xcode 的静态校验（69 项）
-  check_injected_ts.js          注入后 TS/TSX 语法检查（9 个文件，CI 门禁）
+  bump_version.py               升 ADAPTER_VERSION / ADAPTER_BUILD（build 自动 +1）
+  verify_adaptation.py          无需 Xcode 的静态校验（113 项）
+  check_injected_ts.js          注入后 TS/TSX 语法检查（12 个文件，CI 门禁）
   sync_upstream.py              检测/应用上游新 tag，失败回滚
-  build_unsigned_ipa.sh         Release archive → 未签名 IPA
+  build_unsigned_ipa.sh         Release archive → MusicFree-v<版本>-ios-unsigned.ipa
   verify_ipa.py                 校验未签名、含 main.jsbundle / storyboardc /
-                                .appex，缺扩展或 extension point 错误即失败
+                                .appex、版本号与 provenance 匹配
   selftest_verify_ipa.py        verifier 行为测试：无 .appex 的假包必须被拒收
   verify_signed_ipa.sh          签完包后自检：框架 / extension / deep 签名
   bootstrap_github.sh           一键建仓推送并触发首次构建

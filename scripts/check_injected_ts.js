@@ -30,6 +30,9 @@ try {
 
 const files = [
   "src/entry/bootstrap/bootstrap.ts",
+  "src/core/lyricManager.ts",
+  "src/native/liveActivity/index.ios.ts",
+  "src/native/lyricUtil/index.ios.ts",
   "src/entry/index.tsx",
   "src/components/panels/base/panelBase.tsx",
   "src/components/dialogs/components/base/index.tsx",

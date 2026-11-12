@@ -16,11 +16,15 @@ for arg in "$@"; do
 done
 
 REF="$(read_ref)"
+VERSION="$(read_adapter_version)"
 UP="${UPSTREAM_DIR}"
 IOS="${UP}/ios"
 ARCHIVE="${BUILD_DIR}/MusicFree.xcarchive"
 STAGE="${BUILD_DIR}/ipa"
-OUT_IPA="${BUILD_DIR}/MusicFree-${REF}-unsigned.ipa"
+# The filename carries the ADAPTER version, not the upstream tag: upstream may
+# stay on one tag for many adapter releases.
+OUT_IPA="${BUILD_DIR}/MusicFree-v${VERSION}-ios-unsigned.ipa"
+log "building ${OUT_IPA} from upstream ${REF}"
 
 command -v node >/dev/null        || die "node not found"
 command -v xcodebuild >/dev/null  || die "xcodebuild not found — full Xcode is required (CommandLineTools is not enough)"
@@ -87,6 +91,7 @@ cp -R "${APP}" "${STAGE}/Payload/"
 (cd "${STAGE}" && zip -qry "${OUT_IPA}" Payload)
 
 log "verifying ipa"
-"${PYTHON_BIN}" "${ADAPTER_ROOT}/scripts/verify_ipa.py" "${OUT_IPA}"
+"${PYTHON_BIN}" "${ADAPTER_ROOT}/scripts/verify_ipa.py" "${OUT_IPA}" \
+  --expected-version "${VERSION}"
 
 log "OUTPUT: ${OUT_IPA}"
