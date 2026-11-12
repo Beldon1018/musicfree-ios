@@ -23,6 +23,18 @@ MARKER = "musicfree-ios-adapter"
 BUNDLE_ID = "com.musicfree.ios.unsigned"
 
 
+def read_text_exact(path: Path) -> str:
+    """Read without newline translation: a few upstream .tsx files use CRLF."""
+    with path.open("r", encoding="utf-8", newline="") as fh:
+        return fh.read()
+
+
+def write_text_exact(path: Path, text: str) -> None:
+    """Write back preserving the original CRLF/LF style exactly."""
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+
+
 def version_from_ref(ref: str) -> str:
     m = re.search(r"v?(\d+)\.(\d+)\.(\d+)", ref)
     return f"{m.group(1)}.{m.group(2)}.{m.group(3)}" if m else "1.0.0"
@@ -145,6 +157,76 @@ def inject_info_plist(path: Path) -> list[str]:
         if data.get(key) is not True:
             data[key] = True
             changes.append(label)
+
+    # --- Deep links: musicfree://install/<encoded plugin url> ---------------
+    # bootstrap.ts has handled this URL since upstream, but without a declared
+    # scheme iOS never routes it to this app, so "install plugin from link"
+    # was dead code. This is a pure plist change with no runtime risk.
+    url_types = list(data.get("CFBundleURLTypes") or [])
+    if not any("musicfree" in (t.get("CFBundleURLSchemes") or [])
+               for t in url_types if isinstance(t, dict)):
+        url_types.append({
+            "CFBundleURLName": BUNDLE_ID,
+            "CFBundleURLSchemes": ["musicfree"],
+        })
+        data["CFBundleURLTypes"] = url_types
+        changes.append("CFBundleURLTypes += musicfree (plugin install deep link)")
+
+    # --- "Open in MusicFree" for audio + .lrc files ------------------------
+    # The Files app only lists an app in its open-in menu when the app declares
+    # the document types. bootstrap.ts already has a supportLocalMediaType
+    # branch that plays an incoming file URL through the local plugin, so no
+    # new JS business logic is required for the basic audio path.
+    custom_types = (
+        ("com.musicfree.lrc", "LRC lyric file", "public.plain-text", ["lrc"]),
+        ("com.musicfree.flac", "FLAC audio", "public.audio", ["flac"]),
+        ("com.musicfree.ogg", "Ogg audio", "public.audio", ["ogg"]),
+        ("com.musicfree.ape", "Monkey's Audio", "public.audio", ["ape"]),
+        ("com.musicfree.opus", "Opus audio", "public.audio", ["opus"]),
+        ("com.musicfree.wma", "Windows Media Audio", "public.audio", ["wma"]),
+    )
+    imported = list(data.get("UTImportedTypeDeclarations") or [])
+    present = {t.get("UTTypeIdentifier") for t in imported if isinstance(t, dict)}
+    for identifier, desc, conforms, exts in custom_types:
+        if identifier not in present:
+            imported.append({
+                "UTTypeIdentifier": identifier,
+                "UTTypeDescription": desc,
+                "UTTypeConformsTo": [conforms],
+                "UTTypeTagSpecification": {"public.filename-extension": exts},
+            })
+            changes.append(f"UTImportedTypeDeclarations += {identifier}")
+    data["UTImportedTypeDeclarations"] = imported
+
+    doc_types = list(data.get("CFBundleDocumentTypes") or [])
+    doc_names = {d.get("CFBundleTypeName") for d in doc_types if isinstance(d, dict)}
+    if "MusicFree audio" not in doc_names:
+        doc_types.append({
+            "CFBundleTypeName": "MusicFree audio",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": [
+                "public.audio",
+                "public.mp3",
+                "public.mpeg-4-audio",
+                "com.microsoft.waveform-audio",
+                "com.musicfree.flac",
+                "com.musicfree.ogg",
+                "com.musicfree.ape",
+                "com.musicfree.opus",
+                "com.musicfree.wma",
+            ],
+        })
+        changes.append("CFBundleDocumentTypes += audio (open-in from Files)")
+    if "MusicFree LRC" not in doc_names:
+        doc_types.append({
+            "CFBundleTypeName": "MusicFree LRC",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": ["com.musicfree.lrc"],
+        })
+        changes.append("CFBundleDocumentTypes += .lrc")
+    data["CFBundleDocumentTypes"] = doc_types
 
     if changes:
         with path.open("wb") as fh:
@@ -327,6 +409,91 @@ def inject_plugin_install(manager: Path, plugin_list: Path) -> dict[str, list[st
             "'.json' is tested on the trimmed URL, so a pasted URL with a "
             "trailing newline is no longer fetched as a plugin")
     report["pluginList.tsx"] = changes
+
+    return report
+
+
+def inject_plugin_platform_env(path: Path) -> list[str]:
+    """Report the real OS to plugins instead of hardcoding Android.
+
+    plugin.ts builds the sandbox `env` / `process` objects passed into every
+    plugin via Function(...). Both fields are hardcoded to "android", so on
+    iOS a plugin that branches on platform picks the wrong UA, path or API.
+    Use React Native's Platform.OS so the value stays correct on both systems.
+    """
+    text = read_text_exact(path)
+    if ("os: Platform.OS," in text and "platform: Platform.OS," in text
+            and 'import { Platform } from "react-native";' in text):
+        return ["already present"]
+
+    changes: list[str] = []
+    for needle, repl, label in (
+        ('os: "android",', "os: Platform.OS,", "env.os"),
+        ('platform: "android",', "platform: Platform.OS,", "process.platform"),
+    ):
+        if text.count(needle) != 1:
+            raise RuntimeError(
+                f"plugin.ts: {label} anchor not unique/found — upstream changed, "
+                "review the plugin sandbox manually")
+        text = text.replace(needle, repl, 1)
+        changes.append(f"{label} uses Platform.OS instead of hardcoded android")
+
+    if 'import { Platform } from "react-native";' not in text:
+        anchor = 'import axios from "axios";'
+        if text.count(anchor) != 1:
+            raise RuntimeError(
+                "plugin.ts: import anchor for Platform not unique/found — "
+                "upstream changed, review the plugin sandbox manually")
+        text = text.replace(
+            anchor, 'import { Platform } from "react-native";\n' + anchor, 1)
+        changes.append("Platform imported from react-native")
+
+    write_text_exact(path, text)
+    return changes
+
+
+def inject_network_timeouts(check_update: Path,
+                            backup_setting: Path) -> dict[str, list[str]]:
+    """Fix the two remaining bare axios.get calls that inherit the 2 s default.
+
+    plugin.ts sets axios.defaults.timeout = 2000 for plugin *runtime* calls.
+    installPluginFromUrl already overrides it for downloads; the version check
+    and the backup-from-URL import still did not, so both fail on slow networks.
+    The backup import also fetched the untrimmed `text` while validating the
+    trimmed `url`, so a URL pasted with a trailing newline always failed.
+    """
+    report: dict[str, list[str]] = {}
+
+    text = read_text_exact(check_update)
+    old = "const rawInfo = (await axios.get(updateList[i])).data;"
+    new = ("const rawInfo = "
+           "(await axios.get(updateList[i], { timeout: 30000 })).data;")
+    if new in text:
+        report["utils/checkUpdate.ts"] = ["already present"]
+    else:
+        if text.count(old) != 1:
+            raise RuntimeError(
+                "checkUpdate.ts: version fetch anchor not unique/found — "
+                "upstream changed, review manually")
+        write_text_exact(check_update, text.replace(old, new, 1))
+        report["utils/checkUpdate.ts"] = [
+            "version check uses a 30 s timeout (2 s global default is for "
+            "plugin runtime calls)"]
+
+    text = read_text_exact(backup_setting)
+    old = "const raw = (await axios.get(text)).data;"
+    new = "const raw = (await axios.get(url, { timeout: 30000 })).data;"
+    if new in text:
+        report["backupSetting.tsx"] = ["already present"]
+    else:
+        if text.count(old) != 1:
+            raise RuntimeError(
+                "backupSetting.tsx: resume-from-URL anchor not unique/found — "
+                "upstream changed, review manually")
+        write_text_exact(backup_setting, text.replace(old, new, 1))
+        report["backupSetting.tsx"] = [
+            "backup import fetches the trimmed URL with a 30 s timeout "
+            "(previously used the raw text and the 2 s global default)"]
 
     return report
 
@@ -691,11 +858,16 @@ def main() -> int:
     plugin_manager = upstream / "src/core/pluginManager/index.ts"
     plugin_list = upstream / ("src/pages/setting/settingTypes/pluginSetting"
                               "/views/pluginList.tsx")
+    plugin_ts = upstream / "src/core/pluginManager/plugin.ts"
+    check_update = upstream / "src/utils/checkUpdate.ts"
+    backup_setting = upstream / ("src/pages/setting/settingTypes"
+                                 "/backupSetting.tsx")
     launch_storyboard = ios / "MusicFree" / "LaunchScreen.storyboard"
     splash_storyboard = ios / "MusicFree" / "SplashScreen.storyboard"
     for required in (podfile, info, pbxproj, bootstrap, entry_index,
                      panel_base, dialog_base, launch_storyboard,
-                     plugin_manager, plugin_list):
+                     plugin_manager, plugin_list, plugin_ts,
+                     check_update, backup_setting):
         if not required.exists():
             print(json.dumps({"error": f"missing upstream file: {required}"}, indent=2))
             return 1
@@ -714,6 +886,9 @@ def main() -> int:
         report["src/entry/index.tsx"] = inject_entry_index(entry_index)
         report.update(inject_keyboard_avoidance(panel_base, dialog_base))
         report.update(inject_plugin_install(plugin_manager, plugin_list))
+        report.update(inject_network_timeouts(check_update, backup_setting))
+        report["core/pluginManager/plugin.ts"] = inject_plugin_platform_env(
+            plugin_ts)
     except Exception as exc:  # noqa: BLE001 - surface actionable message to CI
         print(json.dumps({"error": str(exc)}, indent=2))
         return 1

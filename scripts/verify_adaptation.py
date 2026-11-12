@@ -88,6 +88,25 @@ def main() -> int:
               "no stale plist-based launch-screen override")
         check(plist.get("NSSupportsLiveActivities") is True,
               "Live Activity capability declared")
+        url_schemes = [
+            scheme
+            for entry in (plist.get("CFBundleURLTypes") or [])
+            if isinstance(entry, dict)
+            for scheme in (entry.get("CFBundleURLSchemes") or [])
+        ]
+        check("musicfree" in url_schemes,
+              "musicfree:// URL scheme declared (plugin install deep link)")
+        doc_types = plist.get("CFBundleDocumentTypes") or []
+        check(any("public.audio" in (d.get("LSItemContentTypes") or [])
+                  for d in doc_types if isinstance(d, dict)),
+              "audio document types declared (open-in from Files)")
+        imported_types = {
+            t.get("UTTypeIdentifier")
+            for t in (plist.get("UTImportedTypeDeclarations") or [])
+            if isinstance(t, dict)
+        }
+        check("com.musicfree.lrc" in imported_types,
+              ".lrc document type declared (open-in from Files)")
     else:
         check(False, "Info.plist exists")
 
@@ -184,6 +203,38 @@ def main() -> int:
               "subscription manifest fetch carries its own 30 s timeout")
     else:
         check(False, "pluginList.tsx exists")
+
+    # 4e. Plugin sandbox must report the real platform, and the remaining
+    #     bare axios.get calls must not inherit the 2 s runtime default.
+    plugin_ts = src / "core" / "pluginManager" / "plugin.ts"
+    if plugin_ts.exists():
+        ptx = plugin_ts.read_text(encoding="utf-8")
+        check("os: Platform.OS," in ptx and "platform: Platform.OS," in ptx,
+              "plugin sandbox reports the real platform via Platform.OS")
+        check('os: "android"' not in ptx and 'platform: "android"' not in ptx,
+              "no hardcoded android identity in the plugin sandbox")
+        check('import { Platform } from "react-native";' in ptx,
+              "Platform import present for the plugin sandbox")
+    else:
+        check(False, "core/pluginManager/plugin.ts exists")
+
+    check_update = src / "utils" / "checkUpdate.ts"
+    if check_update.exists():
+        check("timeout: 30000" in check_update.read_text(encoding="utf-8"),
+              "version check does not inherit the 2 s plugin timeout")
+    else:
+        check(False, "utils/checkUpdate.ts exists")
+
+    backup_setting = (src / "pages" / "setting" / "settingTypes"
+                      / "backupSetting.tsx")
+    if backup_setting.exists():
+        bt = backup_setting.read_text(encoding="utf-8")
+        check("axios.get(url, { timeout: 30000 })" in bt,
+              "backup import uses the trimmed URL and its own 30 s timeout")
+        check("axios.get(text)" not in bt,
+              "backup import no longer fetches the untrimmed raw input")
+    else:
+        check(False, "backupSetting.tsx exists")
 
     # 4b. iOS-native replacements for the three degraded features.
     pod_src = pod_dir / "MusicFreeNative"

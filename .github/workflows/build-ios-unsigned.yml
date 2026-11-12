@@ -80,6 +80,27 @@ jobs:
       - name: Prepare iOS-adapted checkout
         run: bash scripts/prepare.sh
 
+      - name: Lint adapter scripts
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/*.py
+          node --check scripts/check_injected_ts.js
+          for f in scripts/*.sh; do bash -n "$f"; done
+          echo "adapter scripts: python/node/bash syntax OK"
+
+      # Caches must come AFTER prepare.sh: upstream/ is checked out by that
+      # step, so package-lock.json / Podfile do not exist at checkout time.
+      # setup-node's built-in `cache: npm` cannot be used for the same reason.
+      - name: Cache npm downloads and CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            upstream/ios/Pods
+          key: ${{ runner.os }}-xcode16.2-mf-${{ hashFiles('upstream/package-lock.json', 'upstream/ios/Podfile', 'upstream/ios/Podfile.properties.json', 'overlay/ios/LocalPods/MusicFreeNative/MusicFreeNative.podspec') }}
+          restore-keys: |
+            ${{ runner.os }}-xcode16.2-mf-
+
       # Fail fast (in seconds) if ibtool still cannot compile the launch
       # storyboard, instead of burning ~18 minutes on the full RN archive.
       - name: Smoke-test ibtool on the launch storyboard
@@ -98,11 +119,27 @@ jobs:
       - name: Install JS dependencies
         run: cd upstream && HUSKY=0 npm ci
 
+      # verify_adaptation.py asserts strings, and the injector writes those
+      # same strings. A behavioural syntax check catches a broken injection
+      # before the 20-minute archive starts. Full tsc is deliberately NOT used:
+      # upstream carries its own pre-existing type errors.
+      - name: Syntax-check injected TypeScript
+        run: node scripts/check_injected_ts.js "$GITHUB_WORKSPACE/upstream"
+
       - name: Install CocoaPods dependencies
         run: cd upstream/ios && pod install
 
       - name: Build unsigned IPA (Release archive, signing disabled)
         run: bash scripts/build_unsigned_ipa.sh --skip-deps
+
+      # Behavioural guard for H5: prove the verifier actually REJECTS an IPA
+      # with no .appex, instead of trusting a string assertion in the script.
+      - name: Behaviour-test the IPA verifier
+        run: |
+          set -euo pipefail
+          IPA="$(find build -maxdepth 1 -name '*.ipa' -print -quit)"
+          test -n "$IPA"
+          python3 scripts/selftest_verify_ipa.py "$IPA"
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4

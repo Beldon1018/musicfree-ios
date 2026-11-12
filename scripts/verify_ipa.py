@@ -103,6 +103,24 @@ def main() -> int:
         failed.append("SplashScreen.storyboardc missing — Expo SDK 52 calls "
                       "UIStoryboard(name: 'SplashScreen') at native startup "
                       "and throws when it is absent (launch crash)")
+    # A missing .appex used to be printed as a hint while the script still
+    # returned 0. That is exactly how a build with all three Swift sources
+    # present but no Widget Extension target shipped as "VERIFY OK" — the
+    # Dynamic Island then silently showed nothing. Treat it as a hard failure.
+    if not appex:
+        failed.append("Widget Extension (.appex) missing — Dynamic Island / "
+                      "Lock Screen lyrics cannot appear")
+    else:
+        bad_points = []
+        for name, ext_plist in appex_plist.items():
+            ext = ext_plist.get("NSExtension") or {}
+            point = ext.get("NSExtensionPointIdentifier")
+            if point != "com.apple.widgetkit-extension":
+                bad_points.append(f"{name}: {point!r}")
+        if bad_points:
+            failed.append("app extension has the wrong extension point "
+                          "(expected com.apple.widgetkit-extension): "
+                          + ", ".join(bad_points))
     if failed:
         print("VERIFY FAILED: " + "; ".join(failed), file=sys.stderr)
         return 1
@@ -116,9 +134,7 @@ def main() -> int:
               "(sign each .appex first, then the .app, then repack Payload/), "
               "otherwise iOS rejects the install: " + ", ".join(appex))
         print("LIVE ACTIVITY: present — enable 设置 → 歌词 → 桌面歌词 to start it")
-    else:
-        print("LIVE ACTIVITY: no PlugIns/*.appex in this ipa — Dynamic Island / "
-              "Lock Screen lyrics will not appear")
+    # No appex means `failed` is non-empty and we already returned 1 above.
     return 0
 
 

@@ -79,18 +79,18 @@
   <h1>MusicFree iOS 三项能力的原生替代方案</h1>
   <p>不照搬 Android，用 iOS 自己的形态实现：灵动岛 / 锁屏实时活动、App 内歌词浮层、AVFoundation 内嵌歌词、应用内元数据覆盖层</p>
   <div class="meta">
-    <span>2026-11-10</span>
+    <span>2026-11-12 更新</span>
     <span>上游 v1.0.0-beta.4</span>
     <span>RN 0.76.5 / Expo 52</span>
     <span>目标：未签名 IPA</span>
-    <span>静态校验 41/41</span>
-    <span>修复版已出包并通过校验</span>
+    <span>静态校验 69/69</span>
+    <span>Widget Extension 已接线并进包</span>
     <span>启动闪退根因已修复</span>
   </div>
 </header>
 
 <div class="card lead">
-  <p style="margin-top:0"><b>一句话结论：</b>这三项能力此前被归为「iOS 降级项」是不准确的。真正的限制只有一个 —— <b>iOS 不允许跨 App 的系统悬浮窗</b>；另外两项只是当时没实现。现在按 iOS 平台能力重新设计后，三项都有可用路径，其中两项已经写进适配工程并默认启用，灵动岛以「可选、自动降级」的方式提供完整源码。</p>
+  <p style="margin-top:0"><b>一句话结论：</b>这三项能力此前被归为「iOS 降级项」是不准确的。真正的限制只有一个 —— <b>iOS 不允许跨 App 的系统悬浮窗</b>；另外两项只是当时没实现。现在按 iOS 平台能力重新设计后，<b>三项都已实现并编进产物</b>：内嵌歌词读取、应用内元数据覆盖层默认启用，灵动岛 / 锁屏实时活动的 Widget Extension 也已由 <code>scripts/inject_live_activity.py</code> 自动接线，当前 IPA 内含 <code>PlugIns/MusicFreeLiveActivity.appex</code>。<b>它不再是可选增强，自签时必须一起签</b>（见 <a href="signing-and-crash-guide.html">《签名与闪退排查》</a>）。</p>
 </div>
 
 <div class="ok">
@@ -100,7 +100,7 @@
     <tr><th>结构</th><td><code>Payload/MusicFree.app</code>，内嵌 <code>main.jsbundle</code>，arm64 thin Mach-O，84 个 zip 条目</td></tr>
     <tr><th>签名</th><td>无 <code>_CodeSignature</code> / <code>embedded.mobileprovision</code> / <code>CodeResources</code> / <code>SC_Info</code> → <code>VERIFY OK</code></td></tr>
     <tr><th>标识与能力</th><td><code>com.musicfree.ios.unsigned</code> · 1.0.0 (1) · iOS 15.1+ · <code>UIBackgroundModes=audio</code> · <code>NSSupportsLiveActivities=true</code></td></tr>
-    <tr><th>灵动岛现状</th><td>实时活动能力已在 Info.plist 声明，但包内<b>没有 .appex</b>；需接线 Widget Extension 后重新构建才会启动。前台可拖动浮层已随包生效。</td></tr>
+    <tr><th>灵动岛现状（仅指这个已弃用旧包）</th><td>当时 Info.plist 已声明实时活动能力，但这个包内<b>没有 .appex</b>，Swift 文件尚未加入任何 target，所以 <code>MFLiveActivityController</code> 恒为 nil、每次调用静默 no-op。<b>此问题后续已修复</b>：<code>scripts/inject_live_activity.py</code> 会自动创建 Widget Extension target、挂接 Swift 源码、添加 Embed App Extensions 拷贝阶段；当前包（SHA-256 <code>77356a49…</code>）已含 <code>.appex</code> 并通过 <code>verify_ipa.py</code> 校验。</td></tr>
   </table>
 </div>
 
@@ -116,9 +116,9 @@
     <p class="small">不改写音频二进制。编辑结果存进 <code>Documents/</code> 覆盖层，读取时与文件标签合并。用户看到的「改标签」效果一致，沙盒原文件不受影响。</p>
   </div>
   <div class="card">
-    <span class="tag t-part">两层实现</span>
+    <span class="tag t-done">两层均已进包</span>
     <h3>状态栏 / 悬浮歌词</h3>
-    <p class="small">前台用 App 内可拖动歌词浮层（已实现）；后台 / 锁屏用灵动岛 + 锁屏实时活动（源码齐备，需一次性接线）。</p>
+    <p class="small">前台用 App 内可拖动歌词浮层（已实现）；后台 / 锁屏用灵动岛 + 锁屏实时活动（<b>已自动接线并随包产出 .appex</b>）。系统需 iOS 16.1+，入口是「设置 → 歌词 → 桌面歌词」。</p>
   </div>
 </div>
 
@@ -167,17 +167,21 @@
 
 <div class="note"><b>边界：</b>浮层只在 App 前台可见，进入后台或锁屏后消失。这正是下面灵动岛那一层要补的场景，两者是互补而不是重复。</div>
 
-<h3>3.2 状态栏歌词 → 灵动岛 / 锁屏实时活动（源码齐备，可选接线）</h3>
+<h3>3.2 状态栏歌词 → 灵动岛 / 锁屏实时活动（已接线，随包产出）</h3>
 
 <p>用 <code>ActivityKit</code> + Widget Extension 显示当前歌词行。iOS 16.1 起所有机型在锁屏显示，iPhone 14 Pro 及以后机型额外显示在灵动岛。</p>
 
+<p><b>接线方式变了：</b>早期版本里这些 Swift 文件只是「源码齐备、默认不入 target」，导致 <code>NSClassFromString(@"MFLiveActivityController")</code> 恒为 nil、灵动岛永远空白。现在 <code>prepare.sh</code> 每轮会经 <code>inject_ios.py</code> 调用 <code>scripts/inject_live_activity.py</code>，幂等地往重新检出的 <code>project.pbxproj</code> 里写入 <code>PBXNativeTarget</code>、源文件引用、<code>PBXCopyFilesBuildPhase</code>（<code>dstSubfolderSpec = 13</code>，即 <code>PlugIns</code>）与 target 依赖 —— 因为 <code>upstream/</code> 每次都会被重置，接线必须放在脚本里，不能只改一次工程文件。</p>
+
 <table>
   <tr><th>组成</th><th>文件</th><th>归属 target</th></tr>
-  <tr><td>活动数据模型</td><td><code>MusicFreeLyricAttributes.swift</code></td><td>主 App + Extension</td></tr>
+  <tr><td>活动数据模型</td><td><code>MusicFreeLyricAttributes.swift</code>（带 <code>@available(iOS 16.1, *)</code>）</td><td>主 App + Extension</td></tr>
   <tr><td>ActivityKit 控制器（启动 / 更新 / 结束 / 节流）</td><td><code>MusicFreeLiveActivityController.swift</code></td><td>主 App</td></tr>
   <tr><td>SwiftUI 界面（锁屏 + 灵动岛 compact/expanded/minimal）</td><td><code>MusicFreeLiveActivityWidget.swift</code></td><td>Extension</td></tr>
-  <tr><td>Extension 配置</td><td><code>LiveActivity/Info.plist</code>（<code>NSExtensionPointIdentifier = com.apple.widgetkit-extension</code>）</td><td>Extension</td></tr>
+  <tr><td>Extension 配置</td><td><code>LiveActivity/Info.plist</code>（<code>NSExtensionPointIdentifier = com.apple.widgetkit-extension</code>，<code>MinimumOSVersion = 16.1</code>）</td><td>Extension</td></tr>
   <tr><td>RN 桥</td><td><code>MusicFreeLiveActivityModule.{h,m}</code></td><td>本地 Pod（默认已编译）</td></tr>
+  <tr><td><b>工程接线（自动、幂等）</b></td><td><code>scripts/inject_live_activity.py</code> → Widget Extension target <code>MusicFreeLiveActivity</code>、id <code>com.musicfree.ios.unsigned.lyrics</code>、Embed App Extensions 拷贝阶段</td><td>由 <code>prepare.sh</code> 每轮重放</td></tr>
+  <tr><td>产物护栏</td><td><code>verify_ipa.py</code>（缺 <code>.appex</code> 或 extension point 错误 → 硬失败）+ <code>selftest_verify_ipa.py</code>（故意删掉 <code>PlugIns/</code> 的假包必须被拒收）</td><td>CI 行为测试</td></tr>
 </table>
 
 <p>更新链路：<code>lyricManager.ts</code> 的 <code>PlaybackProgressUpdated</code> → <code>LyricUtil.setStatusBarLyricText</code> → <code>index.ios.ts</code> 联动 <code>NativeModules.MusicFreeLiveActivity.updateLyric</code> → ObjC 桥 → Swift 控制器 → <code>Activity.update(using:)</code>。</p>
@@ -192,10 +196,10 @@ for activity in Activity&lt;MusicFreeLyricAttributes&gt;.activities {
 <ul>
   <li><b>不用推送更新</b>：自签的未签名 IPA 拿不到可靠的 APNs 配置；<code>UIBackgroundModes = audio</code> 让进程在后台存活，歌词行可以持续本地更新。</li>
   <li><b>1 秒节流 + 相同文本去重</b>：ActivityKit 有更新预算，逐行歌词（几秒一行）完全够用，也远低于 4 KB 状态上限。</li>
-  <li><b>自动降级</b>：ObjC 桥用 <code>NSClassFromString(@"MFLiveActivityController")</code> 运行时解析 Swift 类，并把 <code>-Swift.h</code> 依赖彻底去掉。没接 Widget Extension 时，每次调用都是静默 no-op，默认 IPA 构建完全不受影响。</li>
+  <li><b>降级路径仍然保留，但已不是默认状态</b>：ObjC 桥用 <code>NSClassFromString(@"MFLiveActivityController")</code> 运行时解析 Swift 类，并把 <code>-Swift.h</code> 依赖彻底去掉。<b>当前构建已接线，这个分支不会走到</b>；只有接线脚本失效、或被人为移除 target 时才会退回静默 no-op。为防这种静默回退，<code>verify_ipa.py</code> 现在把「产物里没有 <code>.appex</code>」直接判为失败，CI 另有行为测试兜底。</li>
 </ul>
 
-<div class="danger"><b>自签场景的硬约束：</b>Widget Extension 是独立的 <code>.appex</code>，必须和 <code>.app</code> 一起签（先签 appex，再签 app，再重打 <code>Payload/</code>）。AltStore 支持；手动 <code>codesign</code> 或部分自签工具可能不支持。若不支持，就不要加这个 target —— 前台浮层仍可用，RN 桥会自动降级。另外用户在系统设置里关闭「实时活动」时，<code>ActivityAuthorizationInfo().areActivitiesEnabled</code> 为 false，控制器会安静地不启动。</div>
+<div class="danger"><b>自签场景的硬约束（当前包必读）：</b>Widget Extension 是独立的 <code>.appex</code>，<b>必须和 <code>.app</code> 一起签</b>：先签 <code>Frameworks/</code> 与 <code>.appex</code>，再签 <code>.app</code>，最后重打 <code>Payload/</code>，且扩展 id <code>com.musicfree.ios.unsigned.lyrics</code> 必须是主 id 的子前缀。AltStore / Sideloadly 默认支持；手动 <code>codesign</code> 需要显式签一遍（完整命令与两份 entitlements 见 <a href="signing-and-crash-guide.html">《签名与闪退排查》§3.2</a>）。<b>不要再「把扩展删掉图省事」</b>：那样产物会被 <code>verify_ipa.py</code> 判失败，且灵动岛/锁屏歌词彻底不可用。签完用 <code>scripts/verify_signed_ipa.sh</code> 自检，它会检查扩展是否存在且签名有效。另外用户在系统设置里关闭「实时活动」时，<code>ActivityAuthorizationInfo().areActivitiesEnabled</code> 为 false，控制器会安静地不启动 —— 这是预期行为，不是签名问题。</div>
 
 <h3>3.3 内嵌歌词读取（已实现）</h3>
 
@@ -223,11 +227,22 @@ setMediaTag                = 写入覆盖层（不碰音频文件）</code></pre
   <tr><td><code>overlay/ios/LocalPods/.../MusicFreeLiveActivityModule.{h,m}</code></td><td>新增</td><td>RN 桥，运行时解析 Swift，未接 Extension 时静默 no-op</td></tr>
   <tr><td><code>overlay/src/native/lyricUtil/index.ios.ts</code></td><td>重写</td><td>从 no-op 改为委托 Pod + 联动 Live Activity</td></tr>
   <tr><td><code>overlay/src/native/mp3Util/index.ios.ts</code></td><td>注释</td><td>说明新的 iOS 行为</td></tr>
-  <tr><td><code>overlay/ios/LiveActivity/*.swift / Info.plist / README.md</code></td><td>新增</td><td>灵动岛完整源码与接线步骤（默认不入 target）</td></tr>
-  <tr><td><code>scripts/inject_ios.py</code></td><td>修改</td><td>注入 <code>NSSupportsLiveActivities</code>；移除 storyboard 编译，改用 plist 启动屏</td></tr>
+  <tr><td><code>overlay/ios/LiveActivity/*.swift / Info.plist / README.md</code></td><td>新增</td><td>灵动岛完整源码；<b>初版确实不入 target，现已由注入脚本自动接线</b>（见下表）</td></tr>
+  <tr><td><code>scripts/inject_ios.py</code></td><td>修改</td><td>注入 <code>NSSupportsLiveActivities</code>、后台音频 / ATS / 文件共享、Bundle ID、<code>SplashScreen.storyboard</code>；<b>「改用 plist 启动屏」的初版做法后来被推翻</b>，见第五节更正</td></tr>
   <tr><td><code>scripts/build_unsigned_ipa.sh</code></td><td>修改</td><td>显式 <code>-sdk iphoneos</code></td></tr>
-  <tr><td><code>scripts/verify_adaptation.py</code></td><td>修改</td><td>静态校验从 19 项扩到 35 项</td></tr>
+  <tr><td><code>scripts/verify_adaptation.py</code></td><td>修改</td><td>静态校验从 19 项扩到当时 35 项，<b>当前 69 项</b></td></tr>
   <tr><td><code>README.md / VERIFICATION.md</code></td><td>修改</td><td>方案说明与验证记录</td></tr>
+</table>
+
+<p class="small">下表是首次交付之后的关键演进，也是当前基线的真实状态：</p>
+
+<table>
+  <tr><th>文件</th><th>作用</th></tr>
+  <tr><td><code>scripts/inject_live_activity.py</code></td><td>幂等创建 Widget Extension target、Swift 源文件引用、<code>PlugIns</code> 拷贝阶段与 target 依赖；由 <code>inject_ios.py</code> 在每轮 <code>prepare.sh</code> 中调用</td></tr>
+  <tr><td><code>scripts/inject_ios.py</code>（本批新增）</td><td>注入 <code>CFBundleURLTypes</code>（<code>musicfree://</code>）、<code>CFBundleDocumentTypes</code> + <code>UTImportedTypeDeclarations</code>（音频与 <code>.lrc</code> 导入）、插件沙盒 <code>os/platform</code> 改为 <code>Platform.OS</code>、版本检查与备份恢复请求独立 30s 超时</td></tr>
+  <tr><td><code>scripts/verify_ipa.py</code> / <code>selftest_verify_ipa.py</code></td><td>缺 <code>.appex</code> 或 extension point 错误直接硬失败；行为测试验证「故意删掉扩展的假包确实被拒收」，避免注入器与验证器同源字符串的自证循环</td></tr>
+  <tr><td><code>scripts/check_injected_ts.js</code> / CI workflow</td><td>对 9 个注入后的 TS/TSX 做 <code>transpileModule</code> 语法检查；CI 增加 npm / Pods 缓存与脚本语法门禁</td></tr>
+  <tr><td><code>scripts/verify_signed_ipa.sh</code></td><td>签名后自检增加「扩展是否存在」硬检查，防止自签工具静默丢掉 <code>PlugIns/</code></td></tr>
 </table>
 
 <h2>五、顺带修掉的云端构建阻塞</h2>
@@ -240,7 +255,7 @@ Command SwiftCompile failed with a nonzero exit code
 
 <p>日志里只有一条真正的 <code>error:</code> —— <code>ibtool</code> 编译 RN 模板的启动屏 storyboard 时在 macOS runner 上找不到对应 platform，SwiftCompile 是级联取消。修法是确定性的：<code>inject_ios.py</code> 幂等移除 storyboard 在 Resources 阶段的引用，改用 iOS 14+ 的 <code>UILaunchScreen</code> plist 启动屏（完全没有 ibtool 步骤），同时 <code>xcodebuild</code> 显式指定 <code>-sdk iphoneos</code>。<code>plutil -lint project.pbxproj</code> 已确认改动后的工程文件语法有效。</p>
 
-<div class="ok"><b>第三次构建 <code>42845832731</code> 已成功：</b><code>prepare.sh</code> 35/35 → <code>npm ci</code> → <code>pod install</code> → <code>xcodebuild -sdk iphoneos ... CODE_SIGNING_ALLOWED=NO</code> 全链路通过。三个新增 Objective-C 模块（浮层 / ID3 / Live Activity 桥）都通过了 Clang 编译与链接，<code>main.jsbundle</code> 也已嵌入。</div>
+<div class="ok"><b>第三次构建 <code>42845832731</code> 已成功（当时的历史状态）：</b><code>prepare.sh</code> 35/35 → <code>npm ci</code> → <code>pod install</code> → <code>xcodebuild -sdk iphoneos ... CODE_SIGNING_ALLOWED=NO</code> 全链路通过。三个新增 Objective-C 模块（浮层 / ID3 / Live Activity 桥）都通过了 Clang 编译与链接，<code>main.jsbundle</code> 也已嵌入。</div>
 
 <div class="danger"><b>后续更正（重要）：</b>上面关于「移除 storyboard 是确定性修法」的判断已被推翻，中间还走过一次弯路。用户自签后反馈「打开闪退」：追到 Expo SDK 52 源码，<code>SplashScreenManager.showSplashScreen()</code> 在原生启动阶段硬编码 <code>UIStoryboard(name: "SplashScreen", bundle: nil)</code>，找不到该 storyboard 会直接抛异常；上游 RN 模板只有 <code>LaunchScreen.storyboard</code>，Expo pod 也不自带。第一轮 <code>a4f3d63</code> 直接恢复 storyboard 编译，云端 <code>42853265361</code> 仍被 <code>ibtool: iOS 18.2 Platform Not Installed</code> 挡住（证明单独加 <code>-sdk iphoneos</code> 不够）。最终 <code>f70b008</code> 生成一份精简的 <code>SplashScreen.storyboard</code>（去掉旧模板的 <code>&lt;deployment identifier="iOS"/&gt;</code> 等元数据），让系统启动屏与 Expo 共用 <code>SplashScreen.storyboardc</code>，并修正 iOS 上误用 Android API 的两处启动调用。另外包内 <code>Frameworks/hermes.framework</code> 必须由自签工具<b>递归签名</b>，否则 dyld 会在启动阶段终止进程。完整诊断与操作步骤见 <a href="signing-and-crash-guide.html">《签名与闪退排查》</a>。</div>
 
@@ -250,31 +265,33 @@ Command SwiftCompile failed with a nonzero exit code
 
 <div class="step"><div class="n">1</div><div class="body"><b>基础包跑通（已完成 ✅）</b>云端构建已成功产出未签名 IPA，<code>main.jsbundle</code> 已嵌入、无任何签名标记。浮层、ID3 内嵌歌词读取、元数据覆盖层都已编译进包，等待真机验证。</div></div>
 <div class="step"><div class="n">2</div><div class="body"><b>验证前台体验</b>自签安装后播放本地音乐，在设置里打开「开启桌面歌词」，检查浮层可拖动、不挡点击、歌词随播放进度更新；导入一首带 USLT 内嵌歌词的 MP3，确认歌词能被读到。</div></div>
-<div class="step"><div class="n">3</div><div class="body"><b>按需开启灵动岛</b>按 <code>overlay/ios/LiveActivity/README.md</code> 用 Xcode GUI 添加 Widget Extension target（或用 XcodeGen 生成工程，避免手改 pbxproj），把三份 Swift 文件分别挂到对应 target，再单独跑一次云端构建验证。<b>建议这一步单独做</b>，不要和基础包验证混在一起，出问题容易定位。</div></div>
+<div class="step"><div class="n">3</div><div class="body"><b>灵动岛接线（已完成 ✅，无需手工操作）</b>Xcode GUI 加 target 的步骤已废弃：<code>scripts/inject_live_activity.py</code> 在每轮 <code>prepare.sh</code> 里自动完成，产物含 <code>.appex</code>，CI run <code>43022942754</code> 已构建成功。<b>现在这一步只剩真机验证</b>：自签时按签名指南签好扩展 → 打开「设置 → 歌词 → 桌面歌词」→ 播放并锁屏，确认锁屏卡片 / 灵动岛出现当前歌词。若没有，先用 <code>verify_signed_ipa.sh</code> 排除扩展漏签，再检查系统设置里「实时活动」是否被关闭。</div></div>
 <div class="step"><div class="n">4</div><div class="body"><b>（可选）补标签编辑 UI</b>上游没有调用 <code>setMediaTag</code> 的界面，如果想要「在 App 里改歌名/歌手/歌词」，需要在 UI 层新增入口；原生覆盖层已经就绪。</div></div>
 
 <h2>七、验证状态与边界</h2>
 
-<div class="ok"><b>已验证：</b><code>prepare.sh</code> 静态校验 <b>41 项 0 失败</b>（新增 Expo storyboard 名字、ibtool 安全 XML 与 iOS 启动分支断言）；连续两次重放聚合哈希一致（幂等）；<code>project.pbxproj</code> / 两个 <code>Info.plist</code> 通过 <code>plutil -lint</code>；podspec <code>ruby -c</code>、Python <code>py_compile</code>、shell <code>bash -n</code>、3 个 <code>index.ios.ts</code> 的 TypeScript 语法全部通过；<b>云端完整 Release archive 成功</b>，三个 Objective-C 模块通过 Clang 编译链接；<code>verify_ipa.py</code> 确认产物未签名且含 JS bundle。</div>
+<div class="ok"><b>已验证：</b><code>prepare.sh</code> 静态校验 <b>69 项 0 失败</b>；连续两次重放聚合哈希一致（幂等）；<code>project.pbxproj</code> / 两个 <code>Info.plist</code> 通过 <code>plutil -lint</code>；podspec <code>ruby -c</code>、Python <code>py_compile</code>、shell <code>bash -n</code>、注入后 9 个 TS/TSX 的 <code>transpileModule</code> 语法检查全部通过；<b>云端完整 Release archive 成功</b>，三个 Objective-C 模块与三份 Swift 源码都通过编译链接；<code>verify_ipa.py</code> 确认当前包（SHA-256 <code>77356a49…</code>）未签名、含 JS bundle、含 <code>MusicFreeLiveActivity.appex</code> 且 extension point 正确；行为测试确认删掉 <code>PlugIns/</code> 的假包会被拒收。</div>
 
-<div class="danger"><b>仍待验证：</b>灵动岛 Swift 源码默认未加入任何 Xcode target，因此<b>尚未过 Swift 编译器</b>，当前 IPA 内无 <code>.appex</code>，实时活动不会启动；浮层拖动与触摸穿透、ID3 <code>USLT</code>/<code>SYLT</code> 实际解码、元数据覆盖层读写、后台音频与锁屏联动都需要<b>真机</b>验证；Sideloadly / AltStore / ESign 重签安装未验证；自动同步的「发现新 tag → 重新构建 → 发 Release」全链路也还没真实触发过。这些都不算已完成交付。</div>
+<div class="danger"><b>仍待验证：</b>① 浮层拖动与触摸穿透、ID3 <code>USLT</code>/<code>SYLT</code> 实际解码、元数据覆盖层读写、后台音频与锁屏联动，这些都需要<b>真机</b>；② 自签工具（Sideloadly / AltStore / ESign）对含 <code>.appex</code> 包的完整重签安装流程；③ 第一批新增的 <code>musicfree://</code> 深链与「文件」App 导入是<b>源码 / plist 侧改动</b>，静态校验已通过，但需下一次 CI 重建后由真机确认「Safari 能唤起 App」「分享菜单出现 MusicFree」；④ 自动同步的「发现新 tag → 重新构建 → 发 Release」全链路还没真实触发过。这些都不算已完成交付。</div>
 
 <h2>八、能力对照总表</h2>
 
 <table>
   <tr><th>能力</th><th>原 Android</th><th>本方案 iOS</th><th>状态</th></tr>
   <tr><td>前台歌词悬浮</td><td>系统悬浮窗</td><td>App 内可拖动浮层</td><td>已实现</td></tr>
-  <tr><td>锁屏 / 后台歌词</td><td>状态栏常驻</td><td>Live Activity（锁屏 + 灵动岛）</td><td>源码齐备，需接线</td></tr>
+  <tr><td>锁屏 / 后台歌词</td><td>状态栏常驻</td><td>Live Activity（锁屏 + 灵动岛）</td><td>已接线进包（待真机确认）</td></tr>
   <tr><td>内嵌歌词</td><td>jaudiotagger LYRICS</td><td>AVFoundation USLT/SYLT/©lyr</td><td>已实现</td></tr>
   <tr><td>外置歌词</td><td>同名 .lrc</td><td>同名 .lrc（上游逻辑不变）</td><td>一直可用</td></tr>
   <tr><td>编辑标签</td><td>改写 ID3 二进制</td><td>应用内元数据覆盖层</td><td>已实现（无 UI 入口）</td></tr>
   <tr><td>标题 / 歌手 / 专辑 / 时长 / 封面</td><td>MediaMetadataRetriever</td><td>AVFoundation commonMetadata</td><td>已实现</td></tr>
   <tr><td>插件 / 播放 / 下载 / WebDAV</td><td>JS 层</td><td>JS 层，不变</td><td>不受影响</td></tr>
+  <tr><td>插件一键安装深链</td><td><code>musicfree://</code></td><td><code>CFBundleURLTypes</code> 激活上游已有的 <code>musicfree://install/</code> 处理</td><td>本批新增，待重建验证</td></tr>
+  <tr><td>从「文件」App 导入歌曲 / 歌词</td><td>系统分享</td><td><code>CFBundleDocumentTypes</code> + <code>UTImportedTypeDeclarations</code>（mp3/m4a/wav/flac/ogg/… 与 .lrc）</td><td>本批新增，待重建验证</td></tr>
 </table>
 
 <footer>
   工程仓库：<code>https://github.com/Beldon1018/musicfree-ios</code> ｜ 上游 <code>maotoumao/MusicFree</code>（AGPL-3.0，本适配层同样受其约束）<br>
-  交付物：修复版未签名 IPA（需自签安装）、<code>musicfree-ios-adapter.zip</code>（适配工程源码，含提交 <code>f70b008</code> 的启动闪退修复）、<a href="signing-and-crash-guide.html">《签名与闪退排查》</a>、本文档。<br>
+  交付物：当前未签名 IPA（含 <code>.appex</code>，需按签名指南递归重签）、适配工程源码（69 项静态校验 + 自动接线脚本）、<a href="signing-and-crash-guide.html">《签名与闪退排查》</a>、本文档。<br>
   不是官方 iOS 版；上游 AGPL-3.0，分发 IPA 时请一并公开对应源码。
 </footer>
 

@@ -3,9 +3,11 @@
 #
 #   bash scripts/verify_signed_ipa.sh path/to/MusicFree-signed.ipa
 #
-# The unsigned build ships Payload/MusicFree.app/Frameworks/hermes.framework.
+# The unsigned build ships Payload/MusicFree.app/Frameworks/hermes.framework
+# and Payload/MusicFree.app/PlugIns/MusicFreeLiveActivity.appex.
 # If a sideload tool only signs the .app, dyld aborts before main() and the app
-# appears to "crash on open". This script catches exactly that case.
+# appears to "crash on open". This script catches exactly that case, and also
+# catches an extension that was skipped or dropped entirely.
 #
 # Requires macOS with codesign (full Xcode OR CommandLineTools is enough).
 set -uo pipefail
@@ -52,8 +54,13 @@ else
 fi
 
 # 2. App extensions (Widget / Live Activity) must be signed before the .app.
+#    A missing extension is a failure too: verify_ipa.py rejects unsigned IPAs
+#    without .appex, and a sideload tool that silently drops it produces an app
+#    that launches fine but never shows Lock Screen / Dynamic Island lyrics.
+EXT_COUNT=0
 for ext in "${APP}"/PlugIns/*.appex; do
   [[ -d "${ext}" ]] || continue
+  EXT_COUNT=$((EXT_COUNT + 1))
   if codesign --verify --strict --verbose=1 "${ext}" >"${TMP}/ok" 2>"${TMP}/err"; then
     echo "  [OK]   extension signed : $(basename "${ext}")"
   else
@@ -62,6 +69,11 @@ for ext in "${APP}"/PlugIns/*.appex; do
     FAIL=1
   fi
 done
+if [[ "${EXT_COUNT}" -eq 0 ]]; then
+  echo "  [FAIL] no PlugIns/*.appex found — the Live Activity extension is missing" >&2
+  echo "         (re-download the original unsigned IPA; do not let the signing tool drop PlugIns/)" >&2
+  FAIL=1
+fi
 
 # 3. Whole-bundle deep verification.
 if codesign --verify --deep --strict --verbose=1 "${APP}" >"${TMP}/ok" 2>"${TMP}/err"; then
@@ -86,11 +98,12 @@ else
 fi
 
 echo "frameworks checked: ${FW_COUNT}"
+echo "extensions checked: ${EXT_COUNT}"
 if [[ "${FAIL}" -eq 0 ]]; then
   echo "SIGN OK: nested frameworks, extensions and the app all verify."
   echo "If the app still crashes on launch, export the .ips crash log — the cause is no longer code signing."
   exit 0
 fi
-echo "SIGN FAILED: re-sign the IPA with a tool that recursively signs Frameworks/" >&2
+echo "SIGN FAILED: re-sign with a tool that recursively signs Frameworks/ AND PlugIns/*.appex" >&2
 echo "See docs/signing-and-crash-guide.html for the exact codesign order." >&2
 exit 1

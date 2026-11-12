@@ -69,10 +69,11 @@
   <h1>签名后打开闪退：诊断、修复与正确自签步骤</h1>
   <p>为什么构建成功 ≠ 真机能启动；哪些问题已在源码侧修掉，哪一步必须由签名工具做对</p>
   <div class="meta">
-    <span>2026-11-10</span>
+    <span>2026-11-12 更新</span>
     <span>上游 v1.0.0-beta.4</span>
-    <span>修复提交 c8a13af</span>
-    <span>静态校验 41/41</span>
+    <span>启动修复 c8a13af</span>
+    <span>静态校验 69/69</span>
+    <span>含 Widget Extension (.appex)</span>
     <span>适用：未签名 IPA 自签</span>
   </div>
 </header>
@@ -85,6 +86,8 @@
   <code>UIStoryboard(name:)</code> 找不到同名 storyboard 会直接抛异常。而上游 RN 模板只有 <code>LaunchScreen.storyboard</code>，<code>ExpoSplashScreen.podspec</code> 也不带任何 storyboard 资源 —— 旧包里根本没有 <code>SplashScreen.storyboardc</code>，所以 App 在 React Native 挂载之前就被杀掉。这跟 JS 里有没有调用 <code>SplashScreen</code> 无关。
   <br><br>
   <b>另一类（签名侧，必须做对）：</b>包内有 <code>Frameworks/hermes.framework</code>。自签工具若只签主可执行文件，dyld 加载 Hermes 时校验失败，同样会在 <code>main()</code> 之前终止进程。换新包也不能省掉这一步。
+  <br><br>
+  <b>2026-11-12 追加（当前包必读）：</b>灵动岛 / 锁屏歌词的 Widget Extension 已经接线，产物内含 <code>PlugIns/MusicFreeLiveActivity.appex</code>。它不是资源文件，而是<b>第二个需要独立签名的可执行体</b>：必须<b>先签 <code>.appex</code> 和嵌套 framework，再签 <code>.app</code></b>，否则轻则安装被拒，重则灵动岛静默失效。下面第 3 节已按新包结构重写。
 </div>
 
 <h2>1. 诊断过程：排除了什么，锁定了什么</h2>
@@ -98,7 +101,7 @@
   <tr><td>根组件注册名</td><td>一致</td><td><code>app.json → MusicFree</code>、<code>AppRegistry.registerComponent</code>、<code>AppDelegate.moduleName = @"MusicFree"</code> 三者一致，Release 加载本地 bundle 而非 Metro</td></tr>
   <tr><td>iOS 原生模块覆盖层是否进包</td><td>已进包</td><td>bundle 内可查到 <code>MusicFreeLiveActivity</code> / <code>liveCall</code>；上游 Android 的 <code>LyricUtil</code> monkey patch 标记不在，说明 <code>index.ios.ts</code> 生效</td></tr>
   <tr><td>签名状态</td><td>确认未签名</td><td>无 <code>_CodeSignature</code> / <code>embedded.mobileprovision</code> / <code>CodeResources</code> / <code>SC_Info</code></td></tr>
-  <tr><td>Extension</td><td>无</td><td>没有 <code>.appex</code>，灵动岛只是源码预留，未接线，不参与本次启动</td></tr>
+  <tr><td>Extension</td><td>旧包无</td><td>这个旧包没有 <code>.appex</code>，灵动岛当时只是源码预留、未接线。<b>当前包已不同</b>：<code>PlugIns/MusicFreeLiveActivity.appex</code> 由 <code>scripts/inject_live_activity.py</code> 自动接线，<code>verify_ipa.py</code> 对缺 <code>.appex</code> 的包会直接判失败（见第 3 节签名顺序）</td></tr>
   <tr><td><b>启动屏资源</b></td><td><b>0 个</b></td><td>包内 84 个条目里没有任何 <code>.storyboardc</code> / <code>.nib</code> / <code>Assets.car</code>；plist 里 <code>UILaunchStoryboardName = None</code>，只有一个空的 <code>UILaunchScreen = {}</code></td></tr>
   <tr><td><b>Expo 启动屏契约</b></td><td><b>不满足</b></td><td>查 Expo SDK 52 源码：<code>SplashScreenManager.swift</code> 的 <code>showSplashScreen()</code> 硬编码 <code>UIStoryboard(name: "SplashScreen", bundle: nil)</code>；<code>ExpoSplashScreen.podspec</code> 的 <code>source_files</code> 只有 <code>*.{h,m,swift}</code>，<b>不自带 storyboard</b>；<code>SplashScreenAppDelegateSubscriber.customizeRootView</code> 会在原生启动时自动触发。旧包缺 <code>SplashScreen.storyboardc</code> → 抛异常 → 闪退</td></tr>
   <tr><td><b>嵌套动态框架</b></td><td><b>1 个</b></td><td><code>Frameworks/hermes.framework/hermes</code>，自签时必须单独、先于 <code>.app</code> 签名</td></tr>
@@ -135,70 +138,87 @@
   </tr>
   <tr>
     <td>校验器加护栏</td>
-    <td><code>verify_adaptation.py</code> 扩到 <b>41 项</b>，断言 Expo storyboard 名字、ibtool 安全的 XML 与两处启动门控；<code>verify_ipa.py</code> 现在<b>缺少 <code>SplashScreen.storyboardc</code> 就直接判失败</b>，并打印需要递归签名的嵌套 framework 清单。用新校验器跑旧包确实报 <code>VERIFY FAILED</code>。</td>
+    <td>当时把 <code>verify_adaptation.py</code> 扩到 <b>41 项</b>，断言 Expo storyboard 名字、ibtool 安全的 XML 与两处启动门控；<code>verify_ipa.py</code> 现在<b>缺少 <code>SplashScreen.storyboardc</code> 就直接判失败</b>，并打印需要递归签名的嵌套 framework 清单。用新校验器跑旧包确实报 <code>VERIFY FAILED</code>。<b>此后校验继续扩到 69 项</b>，并新增「缺 <code>.appex</code> 或 <code>NSExtensionPointIdentifier</code> 错误即硬失败」以及 <code>scripts/selftest_verify_ipa.py</code> 行为测试（故意删掉 <code>PlugIns/</code> 的假包必须被拒收）。</td>
   </tr>
 </table>
 
 <div class="ok">
-  本地复验：<code>prepare.sh</code> → <b>41 checks, 0 failures</b>；生成的 <code>SplashScreen.storyboard</code> 通过 XML 解析（1 个 scene、无 dependencies/device），<code>plutil -lint</code> 校验 <code>project.pbxproj</code> 与 <code>Info.plist</code> 通过；<code>ruby -c</code>、<code>py_compile</code>、<code>bash -n</code>、TypeScript 5.7.3 <code>transpileModule</code>（5 个 TS/TSX 文件）全部通过。
+  当时的本地复验：<code>prepare.sh</code> → <b>41 checks, 0 failures</b>；生成的 <code>SplashScreen.storyboard</code> 通过 XML 解析（1 个 scene、无 dependencies/device），<code>plutil -lint</code> 校验 <code>project.pbxproj</code> 与 <code>Info.plist</code> 通过；<code>ruby -c</code>、<code>py_compile</code>、<code>bash -n</code>、TypeScript 5.7.3 <code>transpileModule</code> 全部通过。<b>当前基线为 69 项 0 失败</b>，且 CI 额外用 <code>scripts/check_injected_ts.js</code> 对 9 个注入后的 TS/TSX 做语法检查。
 </div>
 
 <h2>3. 签名侧：这一步做不对，换了新包一样闪退</h2>
 
 <div class="danger">
   <b>最常见的错误：</b>只重签 <code>MusicFree.app</code> 主程序，忽略 <code>Frameworks/hermes.framework</code>。未签名 IPA 里的每个动态框架都是无签名的，iOS 在启动时由 dyld 逐个校验；任何一个没有有效签名，进程会在 <code>main()</code> 之前被杀，用户看到的就是「图标点一下、白屏一下、回到桌面」，没有任何错误弹窗。
+  <br><br>
+  <b>当前包还多一层：</b><code>PlugIns/MusicFreeLiveActivity.appex</code> 是独立的 Widget Extension，同样是未签名状态。<b>它不签不会让主程序闪退，但会让 iOS 拒绝安装，或装上了灵动岛/锁屏歌词永远不出现</b> —— 后者更难自查，因为 App 本身能正常打开。签名顺序必须是 <code>frameworks → .appex → .app</code>。
 </div>
 
 <h3>3.1 用签名工具（推荐，最少踩坑）</h3>
 
 <ul>
-  <li><b>Sideloadly / AltStore</b>：默认会遍历并递归签名 <code>Frameworks/</code>，一般无需额外设置。若 Sideloadly 里开了自定义选项，确认没有勾选「跳过动态库签名」之类项。</li>
-  <li><b>手机端签名工具（ESign、牛蛙助手、轻松签等）</b>：必须确认「签名 Frameworks / 动态库 / 递归签名」选项已开启。这类工具在只签主程序时最容易出问题。</li>
-  <li>签名用的描述文件（provisioning profile）要覆盖实际 bundle id。本包默认是 <code>com.musicfree.ios.unsigned</code>；很多工具会自动改成自己的通配 id，此时 entitlements 里的 <code>application-identifier</code> 必须跟着改，否则会「装得上、打不开」。</li>
-  <li>最低系统要求 <b>iOS 15.1</b>；低于此版本无法安装。</li>
+  <li><b>Sideloadly / AltStore</b>：默认会遍历并递归签名 <code>Frameworks/</code> 与 <code>PlugIns/</code>，一般无需额外设置。若 Sideloadly 里开了自定义选项，确认没有勾选「跳过动态库签名」「忽略扩展」之类项。</li>
+  <li><b>手机端签名工具（ESign、牛蛙助手、轻松签等）</b>：必须确认「签名 Frameworks / 动态库 / 递归签名」<b>和「签名 App Extension / 插件」</b>都已开启。这类工具在只签主程序时最容易出问题。</li>
+  <li><b>扩展 id 不能被落下</b>：主程序是 <code>com.musicfree.ios.unsigned</code>，Widget Extension 是 <code>com.musicfree.ios.unsigned.lyrics</code>（必须是主 id 的子前缀）。很多自动签名工具会把主 id 改成自己的通配 id，<b>此时必须把扩展 id 一起改</b>，并且两份 entitlements 的 <code>application-identifier</code> 分别对应各自 id，否则常见结果是「主 App 装上了、灵动岛没反应」或安装直接被拒。</li>
+  <li>最低系统要求：主 App <b>iOS 15.1</b>；灵动岛 / 锁屏实时活动要求 <b>iOS 16.1+</b>（灵动岛形态还需 iPhone 14 Pro 及以后机型），低版本上实时活动会安静地不启动，主 App 不受影响。</li>
 </ul>
 
 <div class="ok">
   <b>先自检，别靠猜：</b>适配工程里带了 <code>scripts/verify_signed_ipa.sh</code>，在 macOS 上对签完的 IPA 跑一次即可确认框架有没有签上：
   <pre style="margin:10px 0 0"><code>bash scripts/verify_signed_ipa.sh MusicFree-signed.ipa</code></pre>
-  它会逐个检查 <code>Frameworks/*.framework</code>、<code>PlugIns/*.appex</code>，再做一次 <code>codesign --verify --deep --strict</code>。拿未签名的原始包实测，输出就是 <code>[FAIL] framework NOT signed : hermes.framework — code object is not signed at all</code>，正是最容易导致闪退的那种状态。
+  它会逐个检查 <code>Frameworks/*.framework</code>、<code>PlugIns/*.appex</code>，再做一次 <code>codesign --verify --deep --strict</code>；<b>包里一个 <code>.appex</code> 都没有也会直接判失败</b>（防止签名工具把扩展整个丢掉）。拿未签名的原始包实测，输出就是 <code>[FAIL] framework NOT signed : hermes.framework — code object is not signed at all</code>，正是最容易导致闪退的那种状态。
 </div>
 
 <h3>3.2 手动 codesign（macOS，需要 Xcode 或 CommandLineTools）</h3>
 
-<p>顺序不能反：<b>先签最里层的框架，再签 .app，最后打包</b>。<code>--deep</code> 虽然省事，但 Apple 不推荐，手动逐个更可靠。</p>
+<p>顺序不能反：<b>先签嵌套 framework 和每一个 <code>.appex</code>，再签 <code>.app</code>，最后打包</b>。<code>--deep</code> 虽然省事，但 Apple 不推荐，手动逐个更可靠。扩展必须在主程序之前签，因为 <code>.app</code> 签名会把整个 bundle 的 sealing 固定下来。</p>
 
 <pre><code># 0. 准备：把签名身份换成你自己的证书
 IDENTITY="Apple Development: Your Name (TEAMID)"
-ENT=entitlements.plist          # 见下方
+ENT=entitlements-app.plist       # 主 App，见下方
+ENT_EXT=entitlements-ext.plist   # Widget Extension，见下方
 unzip -q MusicFree-v1.0.0-beta.4-unsigned.ipa -d work
 cd work/Payload
 
-# 1. 放入与证书/bundle id 匹配的描述文件
-cp /path/to/your.mobileprovision MusicFree.app/embedded.mobileprovision
+# 1. 放入与证书 / bundle id 匹配的描述文件（通配 profile 可两份共用）
+cp /path/to/app.mobileprovision MusicFree.app/embedded.mobileprovision
+cp /path/to/ext.mobileprovision \
+   MusicFree.app/PlugIns/MusicFreeLiveActivity.appex/embedded.mobileprovision
 
-# 2. 【关键】逐个签嵌套 framework —— 这一步漏掉就会启动闪退
+# 2. 【关键】逐个签嵌套 framework —— 漏掉就会启动闪退
 find MusicFree.app/Frameworks -type d -name "*.framework" -print0 |
 while IFS= read -r -d '' fw; do
   codesign --force --sign "$IDENTITY" \
     --timestamp none --generate-entitlement-der "$fw" || exit 1
 done
 
-# 3. 再签整个 .app（带入 entitlements）
+# 3. 【关键】逐个签 .appex —— 必须在 .app 之前
+for ext in MusicFree.app/PlugIns/*.appex; do
+  codesign --force --sign "$IDENTITY" \
+    --entitlements "$ENT_EXT" --timestamp none \
+    --generate-entitlement-der "$ext" || exit 1
+done
+
+# 4. 最后签整个 .app（带入主 App 的 entitlements）
 codesign --force --sign "$IDENTITY" \
   --entitlements "$ENT" --timestamp none \
   --generate-entitlement-der MusicFree.app
 
-# 4. 自检：必须全部通过
+# 5. 自检：必须全部通过
 codesign --verify --deep --strict --verbose=2 MusicFree.app
 codesign -d --entitlements - MusicFree.app
+codesign -d --entitlements - MusicFree.app/PlugIns/MusicFreeLiveActivity.appex
 
-# 5. 重新打包成可安装的 ipa
-cd .. &amp;&amp; zip -qry ../MusicFree-signed.ipa Payload</code></pre>
+# 6. 重新打包成可安装的 ipa（保留 PlugIns/，不要只打包可执行文件）
+cd .. &amp;&amp; zip -qry ../MusicFree-signed.ipa Payload
 
-<p>entitlements 示例（<code>TEAMID</code> 换成你自己的 Team ID，bundle id 与描述文件保持一致）：</p>
+# 7. 回到工程根目录，用脚本再验一次（含「扩展是否被丢掉」检查）
+bash scripts/verify_signed_ipa.sh path/to/MusicFree-signed.ipa</code></pre>
 
-<pre><code>&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+<p><b>两份</b> entitlements 示例（<code>TEAMID</code> 换成你自己的 Team ID，两个 <code>application-identifier</code> 必须与各自的描述文件一致）。只给主 App 写一份是最常见的漏项 —— 扩展会因此签不上或装上后不工作：</p>
+
+<p class="small" style="margin-bottom:2px"><b>entitlements-app.plist</b> · 主 App <code>com.musicfree.ios.unsigned</code></p>
+<pre style="margin-top:0"><code>&lt;?xml version="1.0" encoding="UTF-8"?&gt;
 &lt;!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" ...&gt;
 &lt;plist version="1.0"&gt;
 &lt;dict&gt;
@@ -210,6 +230,24 @@ cd .. &amp;&amp; zip -qry ../MusicFree-signed.ipa Payload</code></pre>
   &lt;true/&gt;
 &lt;/dict&gt;
 &lt;/plist&gt;</code></pre>
+
+<p class="small" style="margin-bottom:2px"><b>entitlements-ext.plist</b> · Widget Extension <code>com.musicfree.ios.unsigned.lyrics</code></p>
+<pre style="margin-top:0"><code>&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" ...&gt;
+&lt;plist version="1.0"&gt;
+&lt;dict&gt;
+  &lt;key&gt;application-identifier&lt;/key&gt;
+  &lt;string&gt;TEAMID.com.musicfree.ios.unsigned.lyrics&lt;/string&gt;
+  &lt;key&gt;com.apple.developer.team-identifier&lt;/key&gt;
+  &lt;string&gt;TEAMID&lt;/string&gt;
+  &lt;key&gt;get-task-allow&lt;/key&gt;
+  &lt;true/&gt;
+&lt;/dict&gt;
+&lt;/plist&gt;</code></pre>
+
+<div class="note">
+  <b>如果签名工具自动改了 bundle id：</b>例如主 id 变成 <code>TEAMID.com.yourname.MusicFree</code>，扩展 id 必须同步改成它的子前缀（<code>…MusicFree.lyrics</code> 之类），并把上面四个字符串里的 id 全部替换。<b>扩展 id 不是主 id 的子前缀时，iOS 会拒绝安装</b>。本扩展不需要 App Group、推送或任何特殊 entitlement（实时活动走本地更新、<code>pushType: nil</code>），个人免费证书即可。
+</div>
 
 <h2>4. 如果换了修复版、也按上面签了，仍然闪退</h2>
 
@@ -230,6 +268,7 @@ cd .. &amp;&amp; zip -qry ../MusicFree-signed.ipa Payload</code></pre>
 <table>
   <tr><th style="width:42%">关键字</th><th>含义 / 下一步</th></tr>
   <tr><td><code>dyld: Library not loaded: @rpath/hermes.framework</code>、<code>code signature invalid</code>、<code>SIGKILL / Code Signature Invalid</code></td><td>嵌套框架没签或签错 → 按第 3 节重签，换用 Sideloadly / AltStore 交叉验证</td></tr>
+  <tr><td><code>PlugIns/</code> 扩展签名无效、<code>Mismatched Application Identifier</code>、安装时报「无法验证 App」；或 App 能开但灵动岛/锁屏<b>始终没有歌词</b></td><td><b>不是崩溃，是扩展被漏签或漏打包</b> → 先跑 <code>verify_signed_ipa.sh</code> 看 <code>extensions checked</code> 是否 ≥ 1，再按第 3.2 节先签 <code>.appex</code>、后签 <code>.app</code>；确认扩展 id 是主 id 的子前缀</td></tr>
   <tr><td><code>Could not find a storyboard named 'SplashScreen'</code> / <code>NSInvalidArgumentException</code> / 堆栈里有 <code>UIStoryboard</code> / <code>SplashScreenManager</code></td><td><b>旧包的真实主因</b>。修复版已把 <code>SplashScreen.storyboardc</code> 打进包；若仍出现，把新包的 <code>verify_ipa.py</code> 输出发我，确认资源是否真的进了 bundle</td></tr>
   <tr><td><code>EXC_CRASH (SIGABRT)</code> + <code>NSInternalInconsistencyException</code></td><td>其它启动屏 / SplashScreen 相关原生异常，需要看完整堆栈定位</td></tr>
   <tr><td><code>Terminated due to watchdog / 0x8badf00d</code></td><td>启动超时（~20s 未完成首帧），通常是 JS 初始化阻塞，需要看 <code>bootstrap</code> 阶段日志</td></tr>
@@ -245,12 +284,17 @@ cd .. &amp;&amp; zip -qry ../MusicFree-signed.ipa Payload</code></pre>
 <table>
   <tr><th style="width:38%">文件</th><th>建议</th></tr>
   <tr><td><code>MusicFree-v1.0.0-beta.4-unsigned.ipa</code><br><span class="small">SHA-256 <code>7621d109…</code>，旧包</span></td><td><span class="tag t-hard">弃用</span>缺 <code>SplashScreen.storyboardc</code>，Expo 原生启动必抛异常；新校验器已判失败。建议直接换修复版，不必在它上面反复试签名。</td></tr>
-  <tr><td><b>修复版未签名 IPA</b><br><span class="small">run <code>42863975900</code> · SHA-256 <code>15d56628…</code></span></td><td><span class="tag t-done">使用这个</span>已通过 <code>verify_ipa.py</code>：含 <code>SplashScreen.storyboardc</code>（4 条目）、<code>UILaunchStoryboardName = SplashScreen</code>、iOS 启动分支已修正；<b>签名时仍必须递归签 <code>hermes.framework</code></b>。</td></tr>
-  <tr><td><code>musicfree-ios-adapter.zip</code></td><td>适配工程源码，含注入脚本、41 项静态校验与全部修复，可用于自行复现构建。</td></tr>
+  <tr><td>早期修复版<br><span class="small">run <code>42863975900</code> · SHA-256 <code>15d56628…</code></span></td><td><span class="tag t-part">已被取代</span>修好了启动屏，但当时还没有 <code>.appex</code>。签名规则仍适用，不过不建议再用。</td></tr>
+  <tr><td><b>当前已归档包</b><br><span class="small">run <code>43022942754</code> · SHA-256 <code>77356a49…</code> · 6,962,617 B</span></td><td><span class="tag t-done">使用这个</span><code>verify_ipa.py</code> VERIFY OK：含 <code>SplashScreen.storyboardc</code>、<code>main.jsbundle</code>、<code>PlugIns/MusicFreeLiveActivity.appex</code>（<code>NSExtensionPointIdentifier = com.apple.widgetkit-extension</code>）、未签名。<b>自签时必须同时递归签 <code>hermes.framework</code> 和这个 <code>.appex</code></b>，顺序见第 3.2 节。</td></tr>
+  <tr><td><code>musicfree-ios-adapter.zip</code> / 本仓库源码</td><td>适配工程源码，含注入脚本、<b>69 项</b>静态校验、Widget Extension 接线与全部修复，可用于自行复现构建。</td></tr>
 </table>
 
+<div class="note">
+  <b>批次说明：</b>2026-11-12 的第一批改动（<code>musicfree://</code> URL scheme、音频 / <code>.lrc</code> 文件类型导入、插件运行环境的平台标识、CI 缓存与语法检查）都是<b>源码与工程配置侧</b>的修改，需下一次 CI 重建才会进入 IPA。上面 <code>77356a49…</code> 这个包尚未包含它们，但签名规则完全一致。
+</div>
+
 <footer>
-  MusicFree iOS 适配工程 · 上游 AGPL-3.0 · 本说明仅覆盖未签名 IPA 的自签与启动问题，灵动岛 / Widget Extension 接线仍是可选增强项，未包含在本次修复中。
+  MusicFree iOS 适配工程 · 上游 AGPL-3.0 · 本说明覆盖未签名 IPA 的自签与启动排查。灵动岛 Widget Extension 已由 <code>scripts/inject_live_activity.py</code> 自动接线并随包产出，因此 <code>.appex</code> 签名不是可选项，而是安装的必要条件。
 </footer>
 
 </div>

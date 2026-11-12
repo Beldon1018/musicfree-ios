@@ -448,3 +448,44 @@ await axios.get(url, { headers: { "Cache-Control": "no-cache", ... } })
 > 说明：Hermes 字节码会把标识符压缩、把数字放进常量池，所以用 `grep "timeout: 30000"`
 > 之类的 ASCII 探针在 bundle 上**不可靠**（新旧包都会命中/都不命中）。可靠做法是搜索
 > **UTF-16LE 编码的中文字符串字面量**，并比较两个 bundle 的体积差。
+
+---
+
+## 第一批：配置、工程与文档收尾（2026-11-12）
+
+范围来自 `FEATURE_ROADMAP.md` 第 1 批：O0.1（文档 + 产物校验）、O6（CI 缓存 + 语法门禁）、N4（URL scheme）、N5（文件类型导入）、O5（插件生态收尾）。**均为源码 / 工程配置 / 文档侧改动，需下一次 CI 重建才进入 IPA**；本轮归档包仍是 `77356a49…`。
+
+### 改动
+
+| 文件 | 内容 |
+| --- | --- |
+| `scripts/inject_ios.py` | `read_text_exact()` / `write_text_exact()` 保持 CRLF；`inject_info_plist()` 注入 `CFBundleURLTypes`（`musicfree`）、2 个 `CFBundleDocumentTypes`（`MusicFree audio` / `MusicFree LRC`）与 6 个 `UTImportedTypeDeclarations`；新增 `inject_plugin_platform_env()`（`os` / `platform` → `Platform.OS`，补 `react-native` 导入）与 `inject_network_timeouts()`（`checkUpdate.ts` / `backupSetting.tsx` 裸 `axios.get` → `timeout: 30000` + URL trim） |
+| `scripts/verify_adaptation.py` | 新增 scheme / 文档类型 / 插件平台标识 / 超时断言，静态校验 60 → **69 项** |
+| `scripts/verify_ipa.py` | 缺 `.appex`、`NSExtensionPointIdentifier` 不是 `com.apple.widgetkit-extension` 均加入 `failed`，不再只打印提示 |
+| `scripts/selftest_verify_ipa.py`（新增） | 行为测试：真包必须通过；删掉所有 `/PlugIns/` 条目的假包必须返回非 0 且报 `Widget Extension` |
+| `scripts/check_injected_ts.js`（新增） | 对 9 个注入后的 TS/TSX 跑 `ts.transpileModule` 语法检查（不做全量 `tsc`，上游自带类型错误） |
+| `scripts/verify_signed_ipa.sh` | 增加「一个 `.appex` 都没有 → 硬失败」，防止签名工具静默丢掉 `PlugIns/`；输出新增 `extensions checked` |
+| `.github/workflows/build-ios-unsigned.yml` | 新增脚本语法门禁、`actions/cache`（`~/.npm` + `upstream/ios/Pods`，key 含 lockfile / Podfile / podspec）、注入 TS 语法检查、IPA verifier 行为测试；缓存步骤放在 `prepare.sh` 之后（此时才存在 `upstream/`） |
+| `README.md`、`docs/*.html`、`outputs/*.html` | 修正「默认未接线 / 需一次性接线 / 41 项 / 可选增强」等过时表述；签名指南补 `.appex` 签名顺序、扩展描述文件与两份 entitlements（扩展 id `com.musicfree.ios.unsigned.lyrics`） |
+
+### 本地验证结果
+
+| # | 验证项 | 结果 |
+| --- | --- | --- |
+| 51 | `bash scripts/prepare.sh` | **69 项 0 失败** |
+| 52 | 二次重放幂等 | 519 个文件聚合哈希 `ae1308b2…` 两次一致 |
+| 53 | `plutil -lint` | app `Info.plist`、`project.pbxproj`、extension `Info.plist` 均 OK |
+| 54 | 语法门禁 | `py_compile scripts/*.py`、`node --check`、`bash -n scripts/*.sh` 全通过 |
+| 55 | 注入后 TS 语法 | `{"files":9,"failures":0}` |
+| 56 | CI workflow YAML | 两个 workflow `YAML.load_file` 通过 |
+| 57 | CRLF 保持 | `backupSetting.tsx` 306/306 行仍为 CRLF |
+| 58 | plist 注入值 | scheme `['musicfree']`；文档类型 2 个；自定义 UTI 6 个 |
+| 59 | `verify_ipa.py` + 行为测试 | 真包 VERIFY OK；删掉 4 个 `PlugIns` 条目的假包被判 `VERIFY FAILED` |
+| 60 | `verify_signed_ipa.sh` 新护栏 | 构造无 `.appex` 假包 → 退出码 1，输出 `no PlugIns/*.appex found` |
+
+### 仍待验证
+
+- `musicfree://install/…` 能否从 Safari 唤起 App；「文件」App 分享菜单是否出现 MusicFree（需新 IPA + 真机）。
+- CI 缓存的实际加速效果（需一次完整云端构建）。
+- `verify_signed_ipa.sh` 的 `set -uo pipefail` 缺 `-e`、对 `embedded.mobileprovision` / entitlements 缺失只给 `[WARN]`（`DEFECT_REVIEW.md` L3），本批未改。
+- `DEFECT_REVIEW.md` 的 H3/H4 与 `FEATURE_ROADMAP.md` 第 2 批（灵动岛信息完整化、音频会话、歌词精度）未动。
