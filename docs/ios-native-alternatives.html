@@ -100,7 +100,7 @@
     <tr><th>结构</th><td><code>Payload/MusicFree.app</code>，内嵌 <code>main.jsbundle</code>，arm64 thin Mach-O，84 个 zip 条目</td></tr>
     <tr><th>签名</th><td>无 <code>_CodeSignature</code> / <code>embedded.mobileprovision</code> / <code>CodeResources</code> / <code>SC_Info</code> → <code>VERIFY OK</code></td></tr>
     <tr><th>标识与能力</th><td><code>com.musicfree.ios.unsigned</code> · 1.0.0 (1) · iOS 15.1+ · <code>UIBackgroundModes=audio</code> · <code>NSSupportsLiveActivities=true</code></td></tr>
-    <tr><th>灵动岛现状（仅指这个已弃用旧包）</th><td>当时 Info.plist 已声明实时活动能力，但这个包内<b>没有 .appex</b>，Swift 文件尚未加入任何 target，所以 <code>MFLiveActivityController</code> 恒为 nil、每次调用静默 no-op。<b>此问题后续已修复</b>：<code>scripts/inject_live_activity.py</code> 会自动创建 Widget Extension target、挂接 Swift 源码、添加 Embed App Extensions 拷贝阶段；当前包（SHA-256 <code>77356a49…</code>）已含 <code>.appex</code> 并通过 <code>verify_ipa.py</code> 校验。</td></tr>
+    <tr><th>灵动岛现状（仅指这个已弃用旧包）</th><td>当时 Info.plist 已声明实时活动能力，但这个包内<b>没有 .appex</b>，Swift 文件尚未加入任何 target，所以 <code>MFLiveActivityController</code> 恒为 nil、每次调用静默 no-op。<b>此问题后续已修复</b>：<code>scripts/inject_live_activity.py</code> 会自动创建 Widget Extension target、挂接 Swift 源码、添加 Embed App Extensions 拷贝阶段；当前包（CI run <code>43142605387</code>，SHA-256 <code>aaace2c4…</code>）已含 <code>.appex</code> 并通过 <code>verify_ipa.py</code> 校验。</td></tr>
   </table>
 </div>
 
@@ -265,14 +265,14 @@ Command SwiftCompile failed with a nonzero exit code
 
 <div class="step"><div class="n">1</div><div class="body"><b>基础包跑通（已完成 ✅）</b>云端构建已成功产出未签名 IPA，<code>main.jsbundle</code> 已嵌入、无任何签名标记。浮层、ID3 内嵌歌词读取、元数据覆盖层都已编译进包，等待真机验证。</div></div>
 <div class="step"><div class="n">2</div><div class="body"><b>验证前台体验</b>自签安装后播放本地音乐，在设置里打开「开启桌面歌词」，检查浮层可拖动、不挡点击、歌词随播放进度更新；导入一首带 USLT 内嵌歌词的 MP3，确认歌词能被读到。</div></div>
-<div class="step"><div class="n">3</div><div class="body"><b>灵动岛接线（已完成 ✅，无需手工操作）</b>Xcode GUI 加 target 的步骤已废弃：<code>scripts/inject_live_activity.py</code> 在每轮 <code>prepare.sh</code> 里自动完成，产物含 <code>.appex</code>，CI run <code>43022942754</code> 已构建成功。<b>现在这一步只剩真机验证</b>：自签时按签名指南签好扩展 → 打开「设置 → 歌词 → 桌面歌词」→ 播放并锁屏，确认锁屏卡片 / 灵动岛出现当前歌词。若没有，先用 <code>verify_signed_ipa.sh</code> 排除扩展漏签，再检查系统设置里「实时活动」是否被关闭。</div></div>
+<div class="step"><div class="n">3</div><div class="body"><b>灵动岛接线（已完成 ✅，无需手工操作）</b>Xcode GUI 加 target 的步骤已废弃：<code>scripts/inject_live_activity.py</code> 在每轮 <code>prepare.sh</code> 里自动完成，产物含 <code>.appex</code>，CI run <code>43142605387</code> 已构建成功（首批全部新步骤均通过）。<b>现在这一步只剩真机验证</b>：自签时按签名指南签好扩展 → 打开「设置 → 歌词 → 桌面歌词」→ 播放并锁屏，确认锁屏卡片 / 灵动岛出现当前歌词。若没有，先用 <code>verify_signed_ipa.sh</code> 排除扩展漏签，再检查系统设置里「实时活动」是否被关闭。</div></div>
 <div class="step"><div class="n">4</div><div class="body"><b>（可选）补标签编辑 UI</b>上游没有调用 <code>setMediaTag</code> 的界面，如果想要「在 App 里改歌名/歌手/歌词」，需要在 UI 层新增入口；原生覆盖层已经就绪。</div></div>
 
 <h2>七、验证状态与边界</h2>
 
-<div class="ok"><b>已验证：</b><code>prepare.sh</code> 静态校验 <b>69 项 0 失败</b>；连续两次重放聚合哈希一致（幂等）；<code>project.pbxproj</code> / 两个 <code>Info.plist</code> 通过 <code>plutil -lint</code>；podspec <code>ruby -c</code>、Python <code>py_compile</code>、shell <code>bash -n</code>、注入后 9 个 TS/TSX 的 <code>transpileModule</code> 语法检查全部通过；<b>云端完整 Release archive 成功</b>，三个 Objective-C 模块与三份 Swift 源码都通过编译链接；<code>verify_ipa.py</code> 确认当前包（SHA-256 <code>77356a49…</code>）未签名、含 JS bundle、含 <code>MusicFreeLiveActivity.appex</code> 且 extension point 正确；行为测试确认删掉 <code>PlugIns/</code> 的假包会被拒收。</div>
+<div class="ok"><b>已验证：</b><code>prepare.sh</code> 静态校验 <b>69 项 0 失败</b>；连续两次重放聚合哈希一致（幂等）；<code>project.pbxproj</code> / 两个 <code>Info.plist</code> 通过 <code>plutil -lint</code>；podspec <code>ruby -c</code>、Python <code>py_compile</code>、shell <code>bash -n</code>、注入后 9 个 TS/TSX 的 <code>transpileModule</code> 语法检查全部通过；<b>云端完整 Release archive 成功</b>，三个 Objective-C 模块与三份 Swift 源码都通过编译链接；<b>云端 CI run <code>43142605387</code> 全步骤通过</b>（脚本语法门禁、注入 TS 语法、<code>ibtool</code> 冒烟、完整 archive、verifier 行为测试），28m37s；<code>verify_ipa.py</code> 确认新包（SHA-256 <code>aaace2c4…</code>，6,963,340 B）未签名、含 JS bundle、含 <code>MusicFreeLiveActivity.appex</code> 且 extension point 正确；<b>从新包内解出的 <code>Info.plist</code> 实测带 <code>musicfree</code> URL scheme、2 个文档类型与 6 个自定义 UTI</b>；行为测试确认删掉 <code>PlugIns/</code> 的假包会被拒收；两份 dSYM 的 UUID 与包内二进制逐一吻合。</div>
 
-<div class="danger"><b>仍待验证：</b>① 浮层拖动与触摸穿透、ID3 <code>USLT</code>/<code>SYLT</code> 实际解码、元数据覆盖层读写、后台音频与锁屏联动，这些都需要<b>真机</b>；② 自签工具（Sideloadly / AltStore / ESign）对含 <code>.appex</code> 包的完整重签安装流程；③ 第一批新增的 <code>musicfree://</code> 深链与「文件」App 导入是<b>源码 / plist 侧改动</b>，静态校验已通过，但需下一次 CI 重建后由真机确认「Safari 能唤起 App」「分享菜单出现 MusicFree」；④ 自动同步的「发现新 tag → 重新构建 → 发 Release」全链路还没真实触发过。这些都不算已完成交付。</div>
+<div class="danger"><b>仍待验证：</b>① 浮层拖动与触摸穿透、ID3 <code>USLT</code>/<code>SYLT</code> 实际解码、元数据覆盖层读写、后台音频与锁屏联动，这些都需要<b>真机</b>；② 自签工具（Sideloadly / AltStore / ESign）对含 <code>.appex</code> 包的完整重签安装流程；③ 第一批新增的 <code>musicfree://</code> 深链与「文件」App 导入<b>已随 CI run <code>43142605387</code> 进包并核验过 plist 声明</b>，但系统侧行为仍需真机确认「Safari 能唤起 App」「分享菜单出现 MusicFree」；④ CI 缓存本次是冷启动（28m37s，比上一轮 25m55s 还长，且 runner 有排队提示），<b>加速效果要等第二次命中缓存的构建才能判断</b>；⑤ 自动同步的「发现新 tag → 重新构建 → 发 Release」全链路还没真实触发过。这些都不算已完成交付。</div>
 
 <h2>八、能力对照总表</h2>
 
@@ -285,8 +285,8 @@ Command SwiftCompile failed with a nonzero exit code
   <tr><td>编辑标签</td><td>改写 ID3 二进制</td><td>应用内元数据覆盖层</td><td>已实现（无 UI 入口）</td></tr>
   <tr><td>标题 / 歌手 / 专辑 / 时长 / 封面</td><td>MediaMetadataRetriever</td><td>AVFoundation commonMetadata</td><td>已实现</td></tr>
   <tr><td>插件 / 播放 / 下载 / WebDAV</td><td>JS 层</td><td>JS 层，不变</td><td>不受影响</td></tr>
-  <tr><td>插件一键安装深链</td><td><code>musicfree://</code></td><td><code>CFBundleURLTypes</code> 激活上游已有的 <code>musicfree://install/</code> 处理</td><td>本批新增，待重建验证</td></tr>
-  <tr><td>从「文件」App 导入歌曲 / 歌词</td><td>系统分享</td><td><code>CFBundleDocumentTypes</code> + <code>UTImportedTypeDeclarations</code>（mp3/m4a/wav/flac/ogg/… 与 .lrc）</td><td>本批新增，待重建验证</td></tr>
+  <tr><td>插件一键安装深链</td><td><code>musicfree://</code></td><td><code>CFBundleURLTypes</code> 激活上游已有的 <code>musicfree://install/</code> 处理</td><td>已进包，待真机确认</td></tr>
+  <tr><td>从「文件」App 导入歌曲 / 歌词</td><td>系统分享</td><td><code>CFBundleDocumentTypes</code> + <code>UTImportedTypeDeclarations</code>（mp3/m4a/wav/flac/ogg/… 与 .lrc）</td><td>已进包，待真机确认</td></tr>
 </table>
 
 <footer>

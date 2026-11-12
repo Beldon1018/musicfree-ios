@@ -6,13 +6,13 @@
 
 当前锁定上游版本：`v1.0.0-beta.4`（见 `UPSTREAM_REF`）。
 
-**当前状态（2026-11-12）**：未签名 IPA 已产出并校验通过（CI run `43022942754`，6,962,617 B，SHA-256 `77356a49475fe61f…`）。产物为 iOS 15.1+、arm64、未签名、内嵌 `main.jsbundle`，含 `SplashScreen.storyboardc`，并**内嵌 `PlugIns/MusicFreeLiveActivity.appex`** —— 灵动岛 / 锁屏歌词已由 `scripts/inject_live_activity.py` 自动接线，不再是「源码预留」。`verify_ipa.py` 现在对缺 `.appex` 或 extension point 错误的包直接判失败。
+**当前状态（2026-11-12，第一批已重建）**：最新未签名 IPA 已产出并校验通过（CI run `43142605387`，6,963,340 B，SHA-256 `aaace2c405ef967e…`）。产物为 iOS 15.1+、arm64、未签名、内嵌 `main.jsbundle`，含 `SplashScreen.storyboardc`、`musicfree` URL scheme、音频 / `.lrc` 文档类型，并**内嵌 `PlugIns/MusicFreeLiveActivity.appex`** —— 灵动岛 / 锁屏歌词已由 `scripts/inject_live_activity.py` 自动接线，不再是「源码预留」。`verify_ipa.py` 现在对缺 `.appex` 或 extension point 错误的包直接判失败，并有行为测试兜底。
 
 两类历史启动故障已修复：① Expo SDK 52 原生启动硬编码 `UIStoryboard(name: "SplashScreen")`，旧包缺该资源；② [GitHub `macos-15` runner 镜像缺陷](https://github.com/actions/runner-images/issues/13560) 导致 `ibtool` 报 `iOS 18.2 Platform Not Installed.`（与 storyboard 内容无关）。CI 里无条件执行 `xcodebuild -downloadPlatform iOS` 并加 `ibtool` 冒烟测试。
 
 **自签时必须递归签名 `Frameworks/hermes.framework`，且先签 `PlugIns/*.appex`、再签 `.app`**；漏签扩展不会让 App 闪退，但会让灵动岛静默失效或安装被拒。见 [`docs/signing-and-crash-guide.html`](docs/signing-and-crash-guide.html)。完整记录见 `VERIFICATION.md`。
 
-> **本轮（第一批）改动**都是源码 / 工程配置侧：`musicfree://` URL scheme、音频与 `.lrc` 的文件导入、插件沙盒平台标识与网络超时收尾、CI 缓存与语法门禁、产物校验加固、签名文档修正。`prepare.sh` 现为 **69 项 0 失败**，并有注入后 TS 语法检查与 `verify_ipa.py` 行为测试。**这些改动需下一次 CI 重建才会进入 IPA**；上面那个 `77356a49…` 包尚未包含深链与文件导入。
+> **第一批改动已完成并重建出包**：`musicfree://` URL scheme、音频与 `.lrc` 的文件导入、插件沙盒平台标识与网络超时收尾、CI 缓存与语法门禁、产物校验加固、签名文档修正，提交 `3b78436`。`prepare.sh` 为 **69 项 0 失败**，CI run `43142605387` 全步骤通过（含脚本语法、注入 TS 语法、`ibtool` 冒烟、archive、verifier 行为测试）；新包的 `Info.plist` 已实测带 `musicfree` scheme、2 个文档类型与 6 个自定义 UTI。**深链唤起与「文件」App 分享菜单仍需真机确认**。旧包 `77356a49…` 已备份为 `outputs/MusicFree-v1.0.0-beta.4-unsigned_pre-batch1.ipa`。
 
 ---
 
@@ -96,8 +96,8 @@ Android 的三项能力在 iOS 上不做「照搬」，而是换成 iOS 自己�
 
 | 能力 | 注入内容 | 激活的上游代码 | 状态 |
 | --- | --- | --- | --- |
-| 插件一键安装深链 | `CFBundleURLTypes` → `musicfree` | `bootstrap.ts` 的 `musicfree://install/…`、`.js` 安装、本地媒体分支，以及 `Linking.getInitialURL()` | 已注入，待重建后真机确认 |
-| 从「文件」App 导入歌曲 / 歌词 | `CFBundleDocumentTypes` + `UTImportedTypeDeclarations`（`public.audio`、`public.mp3`、`public.mpeg-4-audio`、`wav` 与自定义 `flac/ogg/ape/opus/wma/lrc`） | 系统把文件复制进 `Documents/Inbox` 后复用既有 `handleLinkingUrl` | 已注入，待重建后真机确认 |
+| 插件一键安装深链 | `CFBundleURLTypes` → `musicfree` | `bootstrap.ts` 的 `musicfree://install/…`、`.js` 安装、本地媒体分支，以及 `Linking.getInitialURL()` | 已进包，待真机确认 |
+| 从「文件」App 导入歌曲 / 歌词 | `CFBundleDocumentTypes` + `UTImportedTypeDeclarations`（`public.audio`、`public.mp3`、`public.mpeg-4-audio`、`wav` 与自定义 `flac/ogg/ape/opus/wma/lrc`） | 系统把文件复制进 `Documents/Inbox` 后复用既有 `handleLinkingUrl` | 已进包，待真机确认 |
 | 插件沙盒平台身份 | `plugin.ts` 的 `os` / `process.platform` 由硬编码 `"android"` 改为 `Platform.OS`，并补 `react-native` 导入 | 依赖平台字段判断行为的插件 | 已注入 + 静态断言 |
 | 网络超时收尾 | `checkUpdate.ts`、`backupSetting.tsx` 的裸 `axios.get` 加 `timeout: 30000`、URL trim；插件运行期请求仍保持 2s 节流 | 版本检查、备份恢复 | 已注入 + 静态断言 |
 

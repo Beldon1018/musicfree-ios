@@ -453,7 +453,7 @@ await axios.get(url, { headers: { "Cache-Control": "no-cache", ... } })
 
 ## 第一批：配置、工程与文档收尾（2026-11-12）
 
-范围来自 `FEATURE_ROADMAP.md` 第 1 批：O0.1（文档 + 产物校验）、O6（CI 缓存 + 语法门禁）、N4（URL scheme）、N5（文件类型导入）、O5（插件生态收尾）。**均为源码 / 工程配置 / 文档侧改动，需下一次 CI 重建才进入 IPA**；本轮归档包仍是 `77356a49…`。
+范围来自 `FEATURE_ROADMAP.md` 第 1 批：O0.1（文档 + 产物校验）、O6（CI 缓存 + 语法门禁）、N4（URL scheme）、N5（文件类型导入）、O5（插件生态收尾）。均为源码 / 工程配置 / 文档侧改动，已由提交 `3b78436` 推送并在 CI run `43142605387` 中重建出包（见下方「云端重建」）。
 
 ### 改动
 
@@ -489,3 +489,21 @@ await axios.get(url, { headers: { "Cache-Control": "no-cache", ... } })
 - CI 缓存的实际加速效果（需一次完整云端构建）。
 - `verify_signed_ipa.sh` 的 `set -uo pipefail` 缺 `-e`、对 `embedded.mobileprovision` / entitlements 缺失只给 `[WARN]`（`DEFECT_REVIEW.md` L3），本批未改。
 - `DEFECT_REVIEW.md` 的 H3/H4 与 `FEATURE_ROADMAP.md` 第 2 批（灵动岛信息完整化、音频会话、歌词精度）未动。
+
+### 云端重建与产物验收（2026-11-12）
+
+提交 `3b78436` 推到 `main` 后手动触发 `build-ios-unsigned.yml`，run **`43142605387`**，head sha `3b784362ee7b26f632455c4a61f9fc09b7e312cc`，2026-11-12 02:36 UTC → 03:05 UTC，**28m37s，conclusion = success**。全部 15 个步骤通过，其中本批新增的 `Lint adapter scripts`、`Cache npm downloads and CocoaPods`、`Syntax-check injected TypeScript`、`Behaviour-test the IPA verifier` 均为 ✓。
+
+| # | 验收项 | 结果 |
+| --- | --- | --- |
+| 61 | CI 全步骤 | success；annotation 仅有 Node 20 → Node 24 的 actions 弃用提示与 macOS arm64 排队提示，均不影响构建 |
+| 62 | 新 IPA | `outputs/MusicFree-v1.0.0-beta.4-unsigned.ipa`，**6,963,340 B**，SHA-256 `aaace2c405ef967e699e83848a9f5258aea63bb650772d01c63831fe91bcd1a0` |
+| 63 | `verify_ipa.py` | VERIFY OK：未签名、含 `main.jsbundle`、4 个启动屏资源、`hermes.framework`、`MusicFreeLiveActivity.appex`（extension point 正确） |
+| 64 | verifier 行为测试 | 真包通过；删掉 4 个 `PlugIns` 条目的假包被判 VERIFY FAILED |
+| 65 | **第一次实际验收 plist 注入是否进包** | 从 IPA 内解出 `Payload/MusicFree.app/Info.plist`：`CFBundleURLSchemes = ['musicfree']`、`CFBundleDocumentTypes = ['MusicFree audio', 'MusicFree LRC']`、自定义 UTI 6 个（`lrc/flac/ogg/ape/opus/wma`）→ `BATCH1 ARTIFACT CHECK: OK` |
+| 66 | dSYM | app `B85E8C23-28A3-371B-8678-F7EFAE87CB46`、appex `85A03AA3-D086-3CCB-8904-8B224BBE0F46`，与包内两个 Mach-O 的 `LC_UUID` 逐一吻合 |
+| 67 | 归档 | 旧包备份为 `outputs/MusicFree-v1.0.0-beta.4-unsigned_pre-batch1.ipa`；旧 dSYM 备份为 `outputs/dSYM-pre-batch1/`；云端原始产物留存在 `outputs/cloud-build/batch1/` |
+
+**关于缓存效果（如实记录）**：本次是缓存冷启动，且 runner 有容量排队提示，28m37s 比上一轮 `43022942754` 的 25m55s 更长，**不能据此判断 O6 缓存是否奏效**，需要第二次命中缓存的构建对比。
+
+**仍需真机确认**：Safari 打开 `musicfree://install/…` 能否唤起 App；「文件」App 长按 mp3/lrc 的分享菜单是否出现 MusicFree；含 `.appex` 的包经 Sideloadly / AltStore / ESign 重签后能否正常安装并出现锁屏 / 灵动岛歌词。

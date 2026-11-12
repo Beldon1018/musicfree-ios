@@ -131,9 +131,11 @@ sync_upstream.py → 每日检测新 tag → 触发 build → 发 Release
 
 ## 四、当前交付物
 
+> **后续更新（2026-11-12）**：本总结生成后，用户授权「第一批先执行」，已完成 O0.1 / O6 / N4 / N5 / O5，提交 `3b78436` 并由 CI run `43142605387` 重建出包。下表已换成新产物；完整验证记录见 `VERIFICATION.md` 末尾「第一批」与「云端重建与产物验收」两节。上文的阶段 A–H 与缺陷清单保留为历史记录。
+
 | 文件 | 说明 |
 | --- | --- |
-| `outputs/MusicFree-v1.0.0-beta.4-unsigned.ipa` | 最新未签名包，6,962,617 B，SHA `77356a49…`，含 `.appex` |
+| `outputs/MusicFree-v1.0.0-beta.4-unsigned.ipa` | 最新未签名包（第一批），6,963,340 B，SHA `aaace2c4…`，含 `.appex` + `musicfree` URL scheme + 音频/`.lrc` 文档类型 |
 | `outputs/MusicFree.app.dSYM` + appex dSYM | 与本次 IPA 二进制 UUID 一致，可符号化 |
 | `outputs/musicfree-ios-adapter.zip` | 工程源码打包 |
 | `outputs/MusicFree-iOS-签名与闪退排查.html`、`MusicFree-iOS-解析与交付说明.html` | 用户向文档 |
