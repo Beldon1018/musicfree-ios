@@ -11,7 +11,7 @@
 > - **第 1 批（提交 `3b78436`、CI run `43142605387`）已修复**：H1（签名文档补 `.appex` 顺序与扩展 entitlements）、H2（README / 两份 HTML 的「未接线 / 41 项」等过时表述）、H5（`verify_ipa.py` 把缺 `.appex` 与错误 extension point 判为硬失败，并加行为测试）、M1（插件沙盒 `os` / `platform` → `Platform.OS`）、M3（`checkUpdate.ts` / `backupSetting.tsx` 裸 `axios.get` 补 30s 超时）、M7（`CFBundleURLTypes` 注入 `musicfree://`）、L4 的一部分（CI 增加注入 TS 语法检查与脚本语法门禁）。
 > - **第 2 批（v1.1.0，源码与本地验证完成）已修复**：**H3**（`title` / `artist` 等全部移入 `ContentState`，SwiftUI 读 `context.state`，不再硬编码 `"MusicFree"`）、**H4**（`applyState(_ json:)` 单入口：有活动只 `update`、无活动才 `request`、`stop` 主动 `end`；`lyricManager.setup()` 加 `listenersReady`；RN 状态发布器加 `installed` guard）、L1（暂停态 `isPlaying`）、M6（Swift 控制器统一主线程派发）。同时补上翻译 / 上下句、进度条、4Hz → ~1Hz 更新节流与独立版本号机制。
 > - **仍未修复 / 未纳入**：O3 音频会话（来电恢复、耳机拔插）按路线图单独一批；L3（`verify_signed_ipa.sh` 的 `set -e` 与 entitlements 只给 WARN）；L4 剩余部分（全量 `tsc` / ESLint 仍未跑，上游自带类型错误）；第 3 批的 App Group / App Intents / 小组件；所有真机行为确认。
-> - 第 2 批的静态校验从 69 → **113 项**，注入后 TS 语法检查 9 → **12 个**文件；Swift 只做 `swiftc -parse`，完整编译结论以 CI 为准。详见 `VERIFICATION.md` 的「第二批」章节。
+> - 第 2 批的静态校验从 69 → **113 项**，注入后 TS 语法检查 9 → **12 个**文件；Swift 本地只做 `swiftc -parse`，**完整 Xcode 16.2 编译链接已由 CI run `43164883366` 证明通过**，产物版本门禁 VERIFY OK。详见 `VERIFICATION.md` 的「第二批」章节。
 
 ---
 

@@ -566,3 +566,23 @@ await axios.get(url, { headers: { "Cache-Control": "no-cache", ... } })
 **如实说明的边界**：`swiftc -parse` 只做语法解析，当前工作机只有 CommandLineTools、没有 iOS SDK（已实测 `SDK "iphoneos" cannot be located`），因此 SwiftUI / ActivityKit 的**类型检查与完整编译链接只能由 CI 的 Xcode 16.2 证明**。为降低这类只能在完整 Xcode 下暴露的风险，本批刻意不用 `ProgressView(timerInterval:)` / `Text(timerInterval:)`，进度条改由 1Hz `elapsed` 驱动普通 `ProgressView(value:)`，并给所有引用 availability-gated `ContentState` 的私有 subview / helper 加 `@available(iOS 16.1, *)`。
 
 **仍待真机确认**：切歌后锁屏 / 灵动岛标题与歌手是否刷新、暂停态、翻译与上下句、进度条推进、关闭桌面歌词或播放结束后实时活动是否收起，以及第一批遗留的 `musicfree://` 深链与「文件」App 分享菜单。
+
+
+### 云端重建与产物验收（2026-11-12）
+
+提交 `51c06fa6dc1bcf9edd70abfe7368c86f9472b859` 推送 `main` 后手动触发 `build-ios-unsigned.yml`，run **`43164883366`**，2026-11-12 05:58:19 UTC → 06:20:47 UTC，job `05:58:23 → 06:20:46`，**22m23s，conclusion = success，22 个步骤全部 ✓**（含 `Resolve adapter version`、`Prepare iOS-adapted checkout`、`Lint adapter scripts`、`Syntax-check injected TypeScript`、`Build unsigned IPA`、`Behaviour-test the IPA verifier`）。这是第二批 Swift / ObjC 改动的**首次完整 Xcode 16.2 编译链接**，本地 `swiftc -parse` 的类型检查盲区至此被覆盖。
+
+| # | 验收项 | 结果 |
+| --- | --- | --- |
+| 81 | CI 全步骤 | success；`Summarize` 打印 `adapter version: v1.1.0 (build 2)`、`upstream: v1.0.0-beta.4`、`artifact: unsigned-ipa (MusicFree-v1.1.0-ios-unsigned.ipa)` |
+| 82 | 产物文件名 | `MusicFree-v1.1.0-ios-unsigned.ipa`（不再是上游 tag 命名） |
+| 83 | 新 IPA 指纹 | **6,980,457 B**，SHA-256 `5aa12af1963b4ad2d0093496a988fafd2c77695a14901728aa15864e1c8a5ecb` |
+| 84 | `verify_ipa.py --expected-version 1.1.0` | VERIFY OK：`marketing_version 1.1.0`、`build_version 2`、`adapter_version 1.1.0`、`upstream_ref v1.0.0-beta.4`、未签名、含 `main.jsbundle` / 4 个启动屏资源 / `hermes.framework` / `MusicFreeLiveActivity.appex`（extension point 正确） |
+| 85 | 包内 plist 实测 | `CFBundleShortVersionString = 1.1.0`、`CFBundleVersion = 2`、`MusicFreeAdapterVersion = 1.1.0`、`MusicFreeUpstreamRef = v1.0.0-beta.4`、`CFBundleURLSchemes = ['musicfree']`、文档类型 `['MusicFree audio', 'MusicFree LRC']`、appex extension point `com.apple.widgetkit-extension` → `BATCH2 ARTIFACT CHECK: OK` |
+| 86 | verifier 行为测试 | 真包通过；删掉 `PlugIns/` 条目的假包仍被判 VERIFY FAILED |
+| 87 | dSYM | app `2AA98472-E134-3E9E-933F-9D9D03285AE2`、appex `EB845396-A0C4-3E0E-9BC7-86DEE998D74F`，与包内两个 Mach-O 的 `LC_UUID` 逐一吻合 |
+| 88 | 归档 | `outputs/MusicFree-v1.1.0-ios-unsigned.ipa` 为主交付物；旧 IPA 备份为 `outputs/MusicFree-v1.0.0-beta.4-unsigned_pre-batch2.ipa`、旧 dSYM 备份为 `outputs/dSYM-pre-batch2/`；云端原始产物留存在 `outputs/cloud-build/batch2/` |
+
+**关于 O6 缓存（补上第一批留下的悬念）**：本轮 `Post Cache npm downloads and CocoaPods` 明确输出 `Cache hit occurred on the primary key macOS-xcode16.2-mf-5acc9c27…，not saving cache`，即缓存**已命中**；22m23s 比第一批冷启动的 28m37s 快约 6m14s。但两轮代码改动不同、runner 负载与排队也不同，**不能把全部时长差异归因于缓存**，只能说缓存机制已验证生效。
+
+**仍需真机确认**：切歌后锁屏 / 灵动岛标题与歌手刷新、`isPlaying` 暂停态、翻译与上下句、进度条推进、关闭桌面歌词或播放结束后实时活动是否收起；第一批遗留的 `musicfree://` 深链与「文件」App 分享菜单；含 `.appex` 的包经自签后能否正常安装。O3 音频会话按路线图仍单独一批。

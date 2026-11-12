@@ -167,7 +167,7 @@ sync_upstream.py → 每日检测新 tag → 触发 build → 发 Release
 - **已解决**：首包构建、自签闪退（两类根因）、bridgeless 崩溃、键盘遮挡、＋号菜单回归、灵动岛 Widget Extension 接线、插件下载 2s 超时、灵动岛能力说明、缺陷审查报告、功能路线图。
 - **第 1 批已完成并重建出包**（用户「第一批先执行」）：H1/H2/H5/L9 文档与签名修正、O6 CI 缓存与语法门禁、N4 `musicfree://` 深链、N5 音频 / `.lrc` 文件导入、O5 插件平台标识与超时收尾。提交 `3b78436`、文档提交 `9b8f5cf`；CI run `43142605387` 成功；新 IPA `aaace2c405ef967e…`（6,963,340 B）与两份 dSYM 已验收并提升为主交付物；旧包备份为 `*_pre-batch1.ipa`。缓存冷启动 28m37s，**加速效果未证实**。
 - **第 2 批已落地（v1.1.0，用户「完成第二批，更新一个版本吧。不能总是一个版本号」）**：O0.2 / O1 / N2 / O2 的源码改造与本地全量验证完成；独立版本机制 `ADAPTER_VERSION = 1.1.0` / `ADAPTER_BUILD = 2`、`bump_version.py`、包内 provenance、`verify_ipa.py --expected-version`、CI / Release tag 解耦均已落地；静态校验 69 → 113 项、注入 TS 检查 9 → 12 个文件、3 个 Swift `swiftc -parse`、二次注入幂等、旧包版本拒收测试全部通过。**O3 音频会话按路线图仍单独一批。**
-- **当前进行中**：第二批的文档同步、提交推送、CI 重建与 v1.1.0 产物验收，见 `VERIFICATION.md`「第二批」章节。
+- **第二批闭环已完成**：提交 `51c06fa` 推送 → CI run `43164883366` success（22m23s，22 步全绿，缓存命中）→ 新 IPA `6,980,457` B / SHA-256 `5aa12af1963b4ad2d0093496a988fafd2c77695a14901728aa15864e1c8a5ecb` 通过 `--expected-version 1.1.0` VERIFY OK → 备份旧包为 `*_pre-batch2.ipa`、旧 dSYM 为 `outputs/dSYM-pre-batch2/` → 新 IPA 与 dSYM 提升为主交付物，两份 dSYM UUID 与包内 Mach-O 吻合。文档指纹由后续提交 `docs: ...` 回写，详见 `VERIFICATION.md`「第二批」章节。
 - **始终未验证的真机项**：自签后实机行为、浮层歌词与 ID3 解码、后台音频、自动同步「发现新 tag → 构建 → 发 Release」全链路；第一批遗留的深链唤起与「文件」App 分享菜单；**第二批新增的切歌标题/歌手、暂停态、翻译与上下句、进度条、关闭桌面歌词后收起**。
 - **工具边界**：本机只有 CommandLineTools，没有 iOS SDK（`SDK "iphoneos" cannot be located`），Swift 只能做语法解析；完整编译链接与真机行为必须由 CI / 使用者确认。
 
