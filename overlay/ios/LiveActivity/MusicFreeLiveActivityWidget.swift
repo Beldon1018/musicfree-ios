@@ -20,7 +20,8 @@ struct MusicFreeLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: MusicFreeLyricAttributes.self) { context in
             LockScreenCard(state: context.state)
-                .padding(14)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 16)
                 .activityBackgroundTint(Color.black.opacity(0.72))
                 .activitySystemActionForegroundColor(Color.white)
         } dynamicIsland: { context in
@@ -29,6 +30,7 @@ struct MusicFreeLiveActivityWidget: Widget {
                     Label(stateTitle(context.state), systemImage: "music.note")
                         .font(.caption)
                         .lineLimit(1)
+                        .padding(.leading, 6)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     Label(context.state.isPlaying ? "播放中" : "已暂停",
@@ -37,9 +39,10 @@ struct MusicFreeLiveActivityWidget: Widget {
                         .font(.caption2)
                         .opacity(0.75)
                         .lineLimit(1)
+                        .padding(.trailing, 6)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    VStack(spacing: 2) {
+                    VStack(spacing: 5) {
                         if let previous = context.state.previousLyric, !previous.isEmpty {
                             Text(previous)
                                 .font(.caption2)
@@ -59,9 +62,14 @@ struct MusicFreeLiveActivityWidget: Widget {
                                 .lineLimit(1)
                         }
                     }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     ProgressRow(state: context.state)
+                        .padding(.horizontal, 10)
+                        .padding(.top, 2)
+                        .padding(.bottom, 5)
                 }
             } compactLeading: {
                 Image(systemName: context.state.isPlaying
@@ -89,7 +97,7 @@ private struct LockScreenCard: View {
     let state: MusicFreeLyricAttributes.ContentState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
                 Image(systemName: state.isPlaying
                       ? "play.circle.fill" : "pause.circle.fill")
@@ -141,7 +149,7 @@ private struct ProgressRow: View {
 
     var body: some View {
         if state.duration > 0 {
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 Text(mmss(state.elapsed))
                     .font(.caption2)
                     .monospacedDigit()
