@@ -586,3 +586,46 @@ await axios.get(url, { headers: { "Cache-Control": "no-cache", ... } })
 **关于 O6 缓存（补上第一批留下的悬念）**：本轮 `Post Cache npm downloads and CocoaPods` 明确输出 `Cache hit occurred on the primary key macOS-xcode16.2-mf-5acc9c27…，not saving cache`，即缓存**已命中**；22m23s 比第一批冷启动的 28m37s 快约 6m14s。但两轮代码改动不同、runner 负载与排队也不同，**不能把全部时长差异归因于缓存**，只能说缓存机制已验证生效。
 
 **仍需真机确认**：切歌后锁屏 / 灵动岛标题与歌手刷新、`isPlaying` 暂停态、翻译与上下句、进度条推进、关闭桌面歌词或播放结束后实时活动是否收起；第一批遗留的 `musicfree://` 深链与「文件」App 分享菜单；含 `.appex` 的包经自签后能否正常安装。O3 音频会话按路线图仍单独一批。
+
+
+## v1.1.1：灵动岛展开态布局修正（2026-11-12）
+
+真机截图反馈：展开态歌词区上下贴边、进度条几乎压在岛屿底缘，左右文字距屏幕边缘过近。只改 `overlay/ios/LiveActivity/MusicFreeLiveActivityWidget.swift`，不动数据链路与生命周期。
+
+### 改动
+
+| 位置 | 旧值 | 新值 |
+| --- | --- | --- |
+| 灵动岛 expanded leading | 无内边距 | `.padding(.leading, 6)` |
+| 灵动岛 expanded trailing | 无内边距 | `.padding(.trailing, 6)` |
+| 歌词区 `VStack` | `spacing: 2` | `spacing: 5` + `.padding(.horizontal, 8)` + `.padding(.vertical, 5)` |
+| 进度条底行 | 无内边距 | `.padding(.horizontal, 10)` + `.padding(.top, 2)` + `.padding(.bottom, 5)` |
+| 锁屏卡片 | `.padding(14)` | `.padding(.horizontal, 18)` + `.padding(.vertical, 16)` |
+| 锁屏卡片内部 `VStack` | `spacing: 7` | `spacing: 9` |
+| 进度条 `HStack` | `spacing: 6` | `spacing: 8` |
+
+版本按约定 bump 为 `1.1.1` / build `3`（`bump_version.py patch`）。
+
+### 本地验证
+
+| # | 验证项 | 结果 |
+| --- | --- | --- |
+| 89 | `swiftc -parse` × 3 | 三个 Swift 文件全部 OK |
+| 90 | `prepare.sh` | **113 项 0 失败** |
+| 91 | 注入后 TS 语法 | `{"files":12,"failures":0}` |
+| 92 | 版本注入 | `MARKETING_VERSION = 1.1.1;`、`CURRENT_PROJECT_VERSION = 3;`、`MusicFreeAdapterVersion = 1.1.1` |
+
+### 云端重建与产物验收
+
+提交 `be6ff0c401d38a27ffd6961f27b7b0ad47d67aea` → CI run **`43169739367`**，2026-11-12 06:40 UTC 起，**14m45s，conclusion = success**，全部步骤通过（缓存命中，比 1.1.0 的 22m23s 更快）。
+
+| # | 验收项 | 结果 |
+| --- | --- | --- |
+| 93 | 产物 | `MusicFree-v1.1.1-ios-unsigned.ipa`，**6,981,531 B**，SHA-256 `005091088cad036e7a11e9b8762dfe43cfd0d22650ab5fe4b4ab1466111de324` |
+| 94 | 版本门禁 | `verify_ipa.py --expected-version 1.1.1` VERIFY OK：`marketing_version 1.1.1`、`build_version 3`、`adapter_version 1.1.1` |
+| 95 | 包内 plist | `CFBundleShortVersionString = 1.1.1`、`CFBundleVersion = 3`、`MusicFreeAdapterVersion = 1.1.1`、`MusicFreeUpstreamRef = v1.0.0-beta.4`、scheme `musicfree`、2 个文档类型、appex extension point 正确、未签名 |
+| 96 | 行为测试 | 真包通过；删掉 `PlugIns/` 的假包仍被拒收 |
+| 97 | dSYM | app `C9594B43-C7E3-33A9-A9A9-E8B3472BED57`、appex `534F9E35-1819-3684-B9C0-00F01D862785`，与包内 Mach-O 的 `LC_UUID` 吻合 |
+| 98 | 归档 | 新包为主交付物；v1.1.0 备份为 `MusicFree-v1.1.0-ios-unsigned_pre-batch3.ipa`，旧 dSYM 备份到 `outputs/dSYM-pre-batch3/`，云端原件在 `outputs/cloud-build/batch3/` |
+
+**仍需真机确认**：新的间距 / 高度在真实灵动岛上的观感、歌词是否仍被截断、以及此前所有第二批运行时行为（切歌、暂停态、翻译、进度条、结束收起）。

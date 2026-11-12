@@ -72,7 +72,7 @@
     <span>2026-11-12 更新</span>
     <span>上游 v1.0.0-beta.4</span>
     <span>启动修复 c8a13af</span>
-    <span>适配版本 v1.1.0 (build 2)</span>
+    <span>适配版本 v1.1.1 (build 3)</span>
     <span>静态校验 113/113</span>
     <span>含 Widget Extension (.appex)</span>
     <span>适用：未签名 IPA 自签</span>
@@ -288,7 +288,8 @@ bash scripts/verify_signed_ipa.sh path/to/MusicFree-signed.ipa</code></pre>
   <tr><td>早期修复版<br><span class="small">run <code>42863975900</code> · SHA-256 <code>15d56628…</code></span></td><td><span class="tag t-part">已被取代</span>修好了启动屏，但当时还没有 <code>.appex</code>。签名规则仍适用，不过不建议再用。</td></tr>
   <tr><td>上一版（第一批前）<br><span class="small">run <code>43022942754</code> · SHA-256 <code>77356a49…</code></span></td><td><span class="tag t-part">已备份</span>含 <code>.appex</code> 与插件超时修复，但<b>没有</b>深链与文件导入。已存为 <code>MusicFree-v1.0.0-beta.4-unsigned_pre-batch1.ipa</code>，签名规则相同。</td></tr>
   <tr><td><b>上一版（第一批，已备份）</b><br><span class="small">run <code>43142605387</code> · SHA-256 <code>aaace2c4…</code> · 6,963,340 B</span></td><td><span class="tag t-part">已被取代</span><code>verify_ipa.py</code> VERIFY OK：含 <code>SplashScreen.storyboardc</code>、<code>main.jsbundle</code>、<code>musicfree</code> URL scheme、音频 / <code>.lrc</code> 文档类型、<code>PlugIns/MusicFreeLiveActivity.appex</code>（<code>NSExtensionPointIdentifier = com.apple.widgetkit-extension</code>）、未签名；行为测试确认删掉 <code>PlugIns/</code> 的假包会被拒收。<b>自签时必须同时递归签 <code>hermes.framework</code> 和这个 <code>.appex</code></b>，顺序见第 3.2 节。</td></tr>
-  <tr><td><b>当前交付包（第二批 v1.1.0）</b><br><span class="small">run <code>43164883366</code> · 提交 <code>51c06fa</code> · SHA-256 <code>5aa12af1…</code> · 6,980,457 B</span></td><td><span class="tag t-done">使用这个</span>文件名 <code>MusicFree-v1.1.0-ios-unsigned.ipa</code>；<code>verify_ipa.py --expected-version 1.1.0</code> VERIFY OK：<code>CFBundleShortVersionString = 1.1.0</code>、<code>CFBundleVersion = 2</code>、<code>MusicFreeAdapterVersion = 1.1.0</code>、<code>MusicFreeUpstreamRef = v1.0.0-beta.4</code>，含 <code>musicfree</code> scheme、音频 / <code>.lrc</code> 文档类型、<code>PlugIns/MusicFreeLiveActivity.appex</code> 且未签名；两份 dSYM UUID 与包内 Mach-O 吻合。<b>自签规则不变</b>：仍要递归签 <code>hermes.framework</code> 与这个 <code>.appex</code>，顺序见第 3.2 节。</td></tr>
+  <tr><td><b>当前交付包（v1.1.1 布局修正）</b><br><span class="small">run <code>43169739367</code> · 提交 <code>be6ff0c</code> · SHA-256 <code>00509108…</code> · 6,981,531 B</span></td><td><span class="tag t-done">使用这个</span>文件名 <code>MusicFree-v1.1.1-ios-unsigned.ipa</code>；<code>verify_ipa.py --expected-version 1.1.1</code> VERIFY OK：<code>CFBundleShortVersionString = 1.1.1</code>、<code>CFBundleVersion = 3</code>、<code>MusicFreeAdapterVersion = 1.1.1</code>、<code>MusicFreeUpstreamRef = v1.0.0-beta.4</code>，含 <code>musicfree</code> scheme、音频 / <code>.lrc</code> 文档类型、<code>PlugIns/MusicFreeLiveActivity.appex</code> 且未签名；两份 dSYM UUID 与包内 Mach-O 吻合。相对 v1.1.0 只调整了灵动岛展开态与锁屏卡片的间距 / 内边距。<b>自签规则不变</b>：仍要递归签 <code>hermes.framework</code> 与这个 <code>.appex</code>，顺序见第 3.2 节。</td></tr>
+  <tr><td>上一版 v1.1.0<br><span class="small">run <code>43164883366</code> · SHA-256 <code>5aa12af1…</code> · 6,980,457 B</span></td><td><span class="tag t-part">已备份</span>完成版本号解耦与 <code>ContentState</code> 重构，布局较挤。已存为 <code>MusicFree-v1.1.0-ios-unsigned_pre-batch3.ipa</code>，签名规则相同。</td></tr>
   <tr><td><code>musicfree-ios-adapter.zip</code> / 本仓库源码</td><td>适配工程源码，含注入脚本、<b>113 项</b>静态校验、Widget Extension 接线与全部修复，可用于自行复现构建。</td></tr>
 </table>
 

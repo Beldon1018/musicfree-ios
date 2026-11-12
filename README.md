@@ -4,11 +4,13 @@
 
 **这不是官方 iOS 版**。官方 README 明确「目前只支持 Android 和 Harmony OS」，从无 IPA 产物。本工程是在官方源码之外加的一层适配，产物需自行重签后安装，且沿用上游 AGPL-3.0 许可。
 
-当前锁定上游版本：`v1.0.0-beta.4`（见 `UPSTREAM_REF`）；**适配层独立版本号 `1.1.0`（build `2`）**，见 `ADAPTER_VERSION` / `ADAPTER_BUILD`。上游 tag 只决定代码来源，不再决定 App 版本、build number、IPA 文件名或 Release tag —— 否则每轮适配改动都还得叫 `1.0.0` / `v1.0.0-beta.4`，分不清「上游没变、适配变了」的情况。
+当前锁定上游版本：`v1.0.0-beta.4`（见 `UPSTREAM_REF`）；**适配层独立版本号 `1.1.1`（build `3`）**，见 `ADAPTER_VERSION` / `ADAPTER_BUILD`。上游 tag 只决定代码来源，不再决定 App 版本、build number、IPA 文件名或 Release tag —— 否则每轮适配改动都还得叫 `1.0.0` / `v1.0.0-beta.4`，分不清「上游没变、适配变了」的情况。
 
-**当前状态（2026-11-12，第二批 v1.1.0 已重建出包）**：适配层第二批（灵动岛信息完整化、幂等生命周期、歌词精度）已完成源码改造、本地全量校验与**云端完整编译**。提交 `51c06fa` → CI run `43164883366`（22m23s，22 步全绿），产物 `outputs/MusicFree-v1.1.0-ios-unsigned.ipa`，6,980,457 B，SHA-256 `5aa12af1…1c8a5ecb`（完整值见 `VERIFICATION.md`）。`verify_ipa.py --expected-version 1.1.0` 已 VERIFY OK，旧包因版本不符会被拒收。第一批的 `MusicFree-v1.0.0-beta.4-unsigned.ipa`（SHA `aaace2c4…`）已备份为 `*_pre-batch2.ipa`。
+**当前状态（2026-11-12，v1.1.1 灵动岛布局修正已重建出包）**：主交付物 `outputs/MusicFree-v1.1.1-ios-unsigned.ipa`，6,981,531 B，SHA-256 `00509108…111de324`（完整值见 `VERIFICATION.md`）。提交 `be6ff0c` → CI run `43169739367`（14m45s，全步骤通过），`verify_ipa.py --expected-version 1.1.1` VERIFY OK：`CFBundleShortVersionString = 1.1.1`、`CFBundleVersion = 3`、`MusicFreeAdapterVersion = 1.1.1`，`musicfree` scheme、音频 / `.lrc` 文档类型与 `.appex` 均在包内，两份 dSYM UUID 与包内 Mach-O 吻合。本次只调整灵动岛展开态 / 锁屏卡片的间距与内边距（详见 `VERIFICATION.md`）。
 
-已验收产物为 iOS 15.1+、arm64、未签名、内嵌 `main.jsbundle`，含 `SplashScreen.storyboardc`、`musicfree` URL scheme、音频 / `.lrc` 文档类型、`MusicFreeAdapterVersion = 1.1.0` / `MusicFreeUpstreamRef = v1.0.0-beta.4`，并**内嵌 `PlugIns/MusicFreeLiveActivity.appex`** —— 灵动岛 / 锁屏歌词已由 `scripts/inject_live_activity.py` 自动接线，不再是「源码预留」。`verify_ipa.py` 现在对缺 `.appex` 或 extension point 错误的包直接判失败，并有行为测试兜底。
+上一版 v1.1.0（提交 `51c06fa` → run `43164883366`，6,980,457 B，SHA `5aa12af1…`）完成了版本号解耦与灵动岛 `ContentState` 重构，已备份为 `outputs/MusicFree-v1.1.0-ios-unsigned_pre-batch3.ipa`；更早的第一批包（SHA `aaace2c4…`）备份为 `*_pre-batch2.ipa`。
+
+已验收产物为 iOS 15.1+、arm64、未签名、内嵌 `main.jsbundle`，含 `SplashScreen.storyboardc`、`musicfree` URL scheme、音频 / `.lrc` 文档类型、`MusicFreeAdapterVersion = 1.1.1` / `MusicFreeUpstreamRef = v1.0.0-beta.4`，并**内嵌 `PlugIns/MusicFreeLiveActivity.appex`** —— 灵动岛 / 锁屏歌词已由 `scripts/inject_live_activity.py` 自动接线，不再是「源码预留」。`verify_ipa.py` 现在对缺 `.appex` 或 extension point 错误的包直接判失败，并有行为测试兜底。
 
 两类历史启动故障已修复：① Expo SDK 52 原生启动硬编码 `UIStoryboard(name: "SplashScreen")`，旧包缺该资源；② [GitHub `macos-15` runner 镜像缺陷](https://github.com/actions/runner-images/issues/13560) 导致 `ibtool` 报 `iOS 18.2 Platform Not Installed.`（与 storyboard 内容无关）。CI 里无条件执行 `xcodebuild -downloadPlatform iOS` 并加 `ibtool` 冒烟测试。
 
@@ -17,6 +19,8 @@
 > **第一批改动已完成并重建出包**：`musicfree://` URL scheme、音频与 `.lrc` 的文件导入、插件沙盒平台标识与网络超时收尾、CI 缓存与语法门禁、产物校验加固、签名文档修正，提交 `3b78436`。`prepare.sh` 当时为 **69 项 0 失败**，CI run `43142605387` 全步骤通过（含脚本语法、注入 TS 语法、`ibtool` 冒烟、archive、verifier 行为测试）；新包的 `Info.plist` 已实测带 `musicfree` scheme、2 个文档类型与 6 个自定义 UTI。**深链唤起与「文件」App 分享菜单仍需真机确认**。旧包 `77356a49…` 已备份为 `outputs/MusicFree-v1.0.0-beta.4-unsigned_pre-batch1.ipa`。
 
 > **第二批已落地并解耦版本（v1.1.0）**：`ADAPTER_VERSION = 1.1.0` / `ADAPTER_BUILD = 2`，`MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` 与 `CFBundleShortVersionString` / `CFBundleVersion` 全部由它们生成；IPA 内另写 `MusicFreeAdapterVersion` / `MusicFreeUpstreamRef` 两个 provenance key，`bump_version.py` 负责后续升版。改动覆盖 O0.2 / O1 / N2 / O2：所有 UI 状态移入 `ContentState`，`start` 幂等（已有活动只 `update`）、`stop` 主动收起、`lyricManager.setup()` 监听去重；锁屏 / 灵动岛显示真实歌名歌手、暂停态、翻译与上下句、进度条；RNTP 4Hz 进度事件经 ~1Hz 心跳与 Swift 250ms 节流后才写入 ActivityKit。O3（音频会话）按路线图仍单独一批。`prepare.sh` 现为 **113 项 0 失败**，注入后 **12 个** TS/TSX 语法检查、3 个 Swift `swiftc -parse`、二次注入幂等、旧包版本拒收测试均通过。**上述灵动岛行为仍需真机确认**。云端重建：提交 `51c06fa` → CI run `43164883366`（22m23s，22 步全绿，含 Xcode 16.2 对第二批 Swift / ObjC 改动的完整编译链接；缓存命中 primary key，比第一批冷启动 28m37s 快约 6 分钟）。产物 6,980,457 B，SHA-256 `5aa12af1963b4ad2d0093496a988fafd2c77695a14901728aa15864e1c8a5ecb`；两份 dSYM 的 UUID `2AA98472-E134-3E9E-933F-9D9D03285AE2` / `EB845396-A0C4-3E0E-9BC7-86DEE998D74F` 与包内 Mach-O 的 `LC_UUID` 逐一吻合。详见 `VERIFICATION.md`。
+>
+> **v1.1.1 布局修正**：真机截图显示展开态内容上下贴边、进度条压在底缘、左右几乎顶到屏幕边。已调整灵动岛 leading / trailing 各 6pt、歌词区行距 2→5 并加 8/5pt 内边距、底行 10pt 横向与 5pt 底部内边距；锁屏卡片由四边 14pt 改为左右 18pt / 上下 16pt，内部行距 7→9。CI run `43169739367` 重建通过，产物 6,981,531 B、SHA-256 `00509108…`。
 
 ---
 
