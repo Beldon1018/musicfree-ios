@@ -4,13 +4,13 @@
 
 **这不是官方 iOS 版**。官方 README 明确「目前只支持 Android 和 Harmony OS」，从无 IPA 产物。本工程是在官方源码之外加的一层适配，产物需自行重签后安装，且沿用上游 AGPL-3.0 许可。
 
-当前锁定上游版本：`v1.0.0-beta.4`（见 `UPSTREAM_REF`）；**适配层独立版本号 `1.1.1`（build `3`）**，见 `ADAPTER_VERSION` / `ADAPTER_BUILD`。上游 tag 只决定代码来源，不再决定 App 版本、build number、IPA 文件名或 Release tag —— 否则每轮适配改动都还得叫 `1.0.0` / `v1.0.0-beta.4`，分不清「上游没变、适配变了」的情况。
+当前锁定上游版本：`v1.0.0-beta.4`（见 `UPSTREAM_REF`）；**适配层独立版本号 `1.1.2`（build `4`）**，见 `ADAPTER_VERSION` / `ADAPTER_BUILD`。上游 tag 只决定代码来源，不再决定 App 版本、build number、IPA 文件名或 Release tag —— 否则每轮适配改动都还得叫 `1.0.0` / `v1.0.0-beta.4`，分不清「上游没变、适配变了」的情况。
 
-**当前状态（2026-11-12，v1.1.1 灵动岛布局修正已重建出包）**：主交付物 `outputs/MusicFree-v1.1.1-ios-unsigned.ipa`，6,981,531 B，SHA-256 `00509108…111de324`（完整值见 `VERIFICATION.md`）。提交 `be6ff0c` → CI run `43169739367`（14m45s，全步骤通过），`verify_ipa.py --expected-version 1.1.1` VERIFY OK：`CFBundleShortVersionString = 1.1.1`、`CFBundleVersion = 3`、`MusicFreeAdapterVersion = 1.1.1`，`musicfree` scheme、音频 / `.lrc` 文档类型与 `.appex` 均在包内，两份 dSYM UUID 与包内 Mach-O 吻合。本次只调整灵动岛展开态 / 锁屏卡片的间距与内边距（详见 `VERIFICATION.md`）。
+**当前状态（2026-11-12，v1.1.2 歌词停更修复已重建出包）**：主交付物 `outputs/MusicFree-v1.1.2-ios-unsigned.ipa`，6,982,573 B，SHA-256 `92e616c8…a79bffde`（完整值见 `VERIFICATION.md`）。提交 `6dcf0e0` → CI run `43174435742`（25m07s，全步骤通过），`verify_ipa.py --expected-version 1.1.2` VERIFY OK：`CFBundleShortVersionString = 1.1.2`、`CFBundleVersion = 4`、`MusicFreeAdapterVersion = 1.1.2`，`musicfree` scheme、音频 / `.lrc` 文档类型与 `.appex` 均在包内，两份 dSYM UUID 与包内 Mach-O 吻合。本次修掉「播放器重试后歌词永久停更」（guard 短路了 `setup()` 尾部的 `refreshLyric`），并把后台进度心跳从 1 Hz 降到 4 秒以避开 ActivityKit 更新预算；另加 15 秒停滞自愈。
 
-上一版 v1.1.0（提交 `51c06fa` → run `43164883366`，6,980,457 B，SHA `5aa12af1…`）完成了版本号解耦与灵动岛 `ContentState` 重构，已备份为 `outputs/MusicFree-v1.1.0-ios-unsigned_pre-batch3.ipa`；更早的第一批包（SHA `aaace2c4…`）备份为 `*_pre-batch2.ipa`。
+上一版 v1.1.1（提交 `be6ff0c` → run `43169739367`，6,981,531 B，SHA `00509108…`）做了灵动岛布局修正，已备份为 `outputs/MusicFree-v1.1.1-ios-unsigned_pre-batch4.ipa`；v1.1.0（`51c06fa` / `43164883366`，SHA `5aa12af1…`）完成版本号解耦与 `ContentState` 重构，备份为 `*_pre-batch3.ipa`；更早的第一批包备份为 `*_pre-batch2.ipa`。
 
-已验收产物为 iOS 15.1+、arm64、未签名、内嵌 `main.jsbundle`，含 `SplashScreen.storyboardc`、`musicfree` URL scheme、音频 / `.lrc` 文档类型、`MusicFreeAdapterVersion = 1.1.1` / `MusicFreeUpstreamRef = v1.0.0-beta.4`，并**内嵌 `PlugIns/MusicFreeLiveActivity.appex`** —— 灵动岛 / 锁屏歌词已由 `scripts/inject_live_activity.py` 自动接线，不再是「源码预留」。`verify_ipa.py` 现在对缺 `.appex` 或 extension point 错误的包直接判失败，并有行为测试兜底。
+已验收产物为 iOS 15.1+、arm64、未签名、内嵌 `main.jsbundle`，含 `SplashScreen.storyboardc`、`musicfree` URL scheme、音频 / `.lrc` 文档类型、`MusicFreeAdapterVersion = 1.1.2` / `MusicFreeUpstreamRef = v1.0.0-beta.4`，并**内嵌 `PlugIns/MusicFreeLiveActivity.appex`** —— 灵动岛 / 锁屏歌词已由 `scripts/inject_live_activity.py` 自动接线，不再是「源码预留」。`verify_ipa.py` 现在对缺 `.appex` 或 extension point 错误的包直接判失败，并有行为测试兜底。
 
 两类历史启动故障已修复：① Expo SDK 52 原生启动硬编码 `UIStoryboard(name: "SplashScreen")`，旧包缺该资源；② [GitHub `macos-15` runner 镜像缺陷](https://github.com/actions/runner-images/issues/13560) 导致 `ibtool` 报 `iOS 18.2 Platform Not Installed.`（与 storyboard 内容无关）。CI 里无条件执行 `xcodebuild -downloadPlatform iOS` 并加 `ibtool` 冒烟测试。
 

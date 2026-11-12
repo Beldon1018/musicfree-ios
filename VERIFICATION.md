@@ -629,3 +629,46 @@ await axios.get(url, { headers: { "Cache-Control": "no-cache", ... } })
 | 98 | 归档 | 新包为主交付物；v1.1.0 备份为 `MusicFree-v1.1.0-ios-unsigned_pre-batch3.ipa`，旧 dSYM 备份到 `outputs/dSYM-pre-batch3/`，云端原件在 `outputs/cloud-build/batch3/` |
 
 **仍需真机确认**：新的间距 / 高度在真实灵动岛上的观感、歌词是否仍被截断、以及此前所有第二批运行时行为（切歌、暂停态、翻译、进度条、结束收起）。
+
+
+## v1.1.2：灵动岛歌词停更修复（2026-11-12）
+
+真机反馈：「歌词滚几次就不动了」。定位到两条独立原因。
+
+### 根因
+
+1. **guard 短路了 `setup()` 的重新绑定**（第二批引入的回归）。`inject_lyric_manager_guard()` 生成的代码是 `if (this.listenersReady) { return; }`，而 `setup()` 末尾的 `this.refreshLyric(true)` 正是「重新读取当前音乐歌词并重建 `lyricParser`」的唯一入口。播放器重试 / 重建后 `setup()` 被直接短路，`lyricParser` 仍指向旧对象，`PlaybackProgressUpdated` 里的 `isCurrentMusic(parser.musicItem)` 判断持续为 false → 歌词永久停更。
+2. **后台 1 Hz 心跳撞 ActivityKit 更新预算**。灵动岛在桌面时 App 处于后台，原实现每秒 `activity.update` 一次；长时间运行会被系统限流，卡片停在最后一次收到的内容上，表现同样是「滚几次就停」。
+
+### 改动
+
+| 文件 | 内容 |
+| --- | --- |
+| `scripts/inject_ios.py` | `inject_lyric_manager_guard()` 生成的 guard 命中分支改为先 `this.refreshLyric(true)` 再 return；注释说明原因，防止后人改回 |
+| `overlay/src/native/liveActivity/index.ios.ts` | 新增 `lastLineAdvanceAt` / `lastNudgeAt`；播放中歌词行 15 秒未前进时调用一次 `lyricManager.setup?.()` 自愈 |
+| 同上 | 进度心跳改为按 `AppState.currentState` 分档：前台 900 ms，后台 4000 ms；歌词行变化仍立即发布 |
+| `scripts/verify_adaptation.py` | 113 → **115 项**：新增「guarded setup() still re-arms the track」与「publisher nudges lyricManager when the line stops advancing」 |
+
+### 本地验证
+
+| # | 验证项 | 结果 |
+| --- | --- | --- |
+| 99 | `prepare.sh` | **115 项 0 失败** |
+| 100 | 注入后 TS 语法 | `{"files":12,"failures":0}` |
+| 101 | Swift 语法 | 3 个文件 `swiftc -parse` OK |
+| 102 | guard 注入实测 | `upstream/src/core/lyricManager.ts` 的 guard 分支含注释与 `this.refreshLyric(true);` |
+| 103 | 心跳分档 | 注入后文件含 `AppState.currentState === "active" ? 900 : 4000` |
+
+### 云端重建与产物验收
+
+提交 `f360499`（guard + 自愈）与 `6dcf0e0`（后台降频）→ CI run **`43174435742`**，**25m07s，conclusion = success**。中间有一次 run `43174171966` 在合并降频改动时主动取消，不产出产物。
+
+| # | 验收项 | 结果 |
+| --- | --- | --- |
+| 104 | 产物 | `MusicFree-v1.1.2-ios-unsigned.ipa`，**6,982,573 B**，SHA-256 `92e616c8329c737c154a451a1206ab8cefde9fcf43726a497d1faa01a79bffde` |
+| 105 | 版本门禁 | `verify_ipa.py --expected-version 1.1.2` VERIFY OK：`marketing_version 1.1.2`、`build_version 4`、`adapter_version 1.1.2` |
+| 106 | 包内 plist | `CFBundleShortVersionString = 1.1.2`、`CFBundleVersion = 4`、`MusicFreeAdapterVersion = 1.1.2`、`MusicFreeUpstreamRef = v1.0.0-beta.4`、scheme / 文档类型 / appex extension point 均正确、未签名 |
+| 107 | dSYM | app `1C940E40-F294-3E89-97AE-A39F83E05AF1`、appex `534F9E35-1819-3684-B9C0-00F01D862785`，与包内两个 Mach-O 的 `LC_UUID` 吻合 |
+| 108 | 归档 | 新包为主交付物；v1.1.1 备份为 `MusicFree-v1.1.1-ios-unsigned_pre-batch4.ipa`，旧 dSYM 到 `outputs/dSYM-pre-batch4/`，云端原件 `outputs/cloud-build/batch4/` |
+
+**仍需真机确认**：长播（>10 分钟）歌词是否持续滚动、后台 / 锁屏场景是否仍会停、切歌后首行是否正确、以及 v1.1.1 的间距观感。若仍停，需区分「App 内歌词是否同步停止」「进度条是否仍在走」「切歌后还是同一首歌中途」，以判断是解析器问题还是数据源只有少量行。O3 音频会话仍未动。
