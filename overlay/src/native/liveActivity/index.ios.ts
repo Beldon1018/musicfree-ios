@@ -57,6 +57,8 @@ let lastPosition = 0;
 let lastDuration = 0;
 let lastHeartbeat = 0;
 let lastKnownPlaying = true;
+let lastLineAdvanceAt = Date.now();
+let lastNudgeAt = 0;
 
 function publish(patch: IStatePatch): void {
     try {
@@ -206,6 +208,7 @@ export function setupLiveActivityBridge(): void {
         const info = currentLineInfo();
         if (info.key !== lastLineKey || seeked) {
             lastLineKey = info.key;
+            lastLineAdvanceAt = now;
             publish({
                 ...info.patch,
                 isPlaying: lastKnownPlaying,
@@ -214,6 +217,25 @@ export function setupLiveActivityBridge(): void {
             });
             lastHeartbeat = now;
             return;
+        }
+
+        // --- stall recovery ---
+        // If the line has not advanced for 15 s while audio is playing, the
+        // upstream manager's parser may be stale (player retry rebuilds the
+        // track player but keeps the old parser bound). `setup()` is guarded
+        // and now only re-arms the current track, so this is cheap.
+        if (
+            lastKnownPlaying &&
+            now - lastLineAdvanceAt > 15000 &&
+            now - lastNudgeAt > 15000
+        ) {
+            lastNudgeAt = now;
+            lastLineAdvanceAt = now;
+            try {
+                lyricManager.setup?.();
+            } catch {
+                // Never let recovery break playback.
+            }
         }
 
         // --- plain 1 Hz progress tick (drives the progress bar) ---

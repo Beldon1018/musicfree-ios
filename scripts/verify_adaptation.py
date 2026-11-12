@@ -403,6 +403,8 @@ def main() -> int:
         br = bridge.read_text(encoding="utf-8")
         check("let installed = false" in br and "if (installed" in br,
               "publisher registers RNTP listeners exactly once (O0.2)")
+        check("lastLineAdvanceAt" in br and "lyricManager.setup?.()" in br,
+              "publisher nudges lyricManager when the line stops advancing")
         check("TrackPlayer.currentMusic" in br,
               "publisher reads the real track title/artist")
         check("lyricManager.currentLyricItem" in br,
@@ -433,8 +435,12 @@ def main() -> int:
 
     lm_src = src / "core" / "lyricManager.ts"
     if lm_src.exists():
-        check("listenersReady" in lm_src.read_text(encoding="utf-8"),
+        lm_text = lm_src.read_text(encoding="utf-8")
+        check("listenersReady" in lm_text,
               "O0.2: lyricManager.setup() listener registration is guarded")
+        check("// Adapter: setup() also re-arms" in lm_text
+              and "this.refreshLyric(true);" in lm_text,
+              "O0.2: guarded setup() still re-arms the track (frozen-lyric fix)")
 
     # 5. App entry point.
     check((upstream / "index.js").exists() or (upstream / "index.ts").exists(), "JS entry point exists")
